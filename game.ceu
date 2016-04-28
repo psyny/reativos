@@ -1,0 +1,244 @@
+#include "sdl.ceu"
+
+// Estruturas de dados
+data Vetor2D with
+	var int x,y;
+end;
+
+data RGBA with
+	var int r,g,b,a;
+end;
+
+input void SDL_REDRAW;
+input void SDL_QUIT;
+input int  SDL_DT;
+input _SDL_KeyboardEvent&& SDL_KEYDOWN;
+input _SDL_KeyboardEvent&& SDL_KEYUP;
+input _SDL_MouseButtonEvent&& SDL_MOUSEBUTTONDOWN;
+
+var _SDL_Window&? window;
+    finalize
+        window = &_SDL_CreateWindow("Jogo",
+                    _SDL_WINDOWPOS_UNDEFINED,
+                    _SDL_WINDOWPOS_UNDEFINED,
+                    640, 480, _SDL_WINDOW_SHOWN);
+    with
+        _SDL_DestroyWindow(&&window!);
+    end
+
+var _SDL_Renderer&? renderer;
+    finalize
+        renderer = &_SDL_CreateRenderer(&&window!, -1, 0);
+    with
+        _SDL_DestroyRenderer(&&renderer!);
+    end
+
+class Cloud with
+    var _SDL_Renderer& ren;
+    var _SDL_Rect      r;
+    var int            vx;
+do
+    var int x = -this.r.w * 1000;
+    par do
+        every dt in SDL_DT do
+            x = x + this.vx*dt;
+            if x > 640000 then
+                x = 0;
+            end
+        end
+    with
+        every SDL_REDRAW do
+            _SDL_SetRenderDrawColor(&&this.ren,
+                                    0xDD,0xDD,0xDD,0x00);
+            this.r.x = x / 1000;
+            _SDL_RenderFillRect(&&this.ren, &&this.r);
+        end
+    end
+end
+
+class AccelField with
+
+do
+
+end
+
+
+// Organismo do campo de aceleracao resultante
+class CompositeAccelField with
+	// Retorna minha aceleracao
+	function (Vetor2D pos)=>Vetor2D getAccelVector;	
+do
+	function (Vetor2D pos)=>Vetor2D getAccelVector do
+		//return 100;
+	end
+end
+
+
+// RAFAEL - Teste de organismo pai - PhysOrganism
+class PhysOrganism with 
+	var _SDL_Renderer& ren;	
+	
+	var Vetor2D pos = Vetor2D( 0 , 0 );
+	var Vetor2D vel = Vetor2D( 0 , 0 );
+	var Vetor2D ace = Vetor2D( 0 , 0 );
+	var Vetor2D drag = Vetor2D ( 95 , 0 );
+	
+	var Vetor2D tam = Vetor2D( 10 , 10 );
+	
+	// Construtor
+	function (_SDL_Renderer& ren, int x, int y, int sx, int sy)=>PhysOrganism build;
+do		
+	// Definição do construtor
+	function (_SDL_Renderer& ren, int x, int y, int sx, int sy)=>PhysOrganism build do
+		this.ren 		= &ren;
+		this.pos.x  	= x;
+		this.pos.y		= x;
+		this.tam.x		= sx;
+		this.tam.y		= sy;
+	end
+
+	// Variaveis internas
+	var _SDL_Rect r = _SDL_Rect( pos.x , pos.y , tam.x , tam.y );
+
+	par do
+        every dt in SDL_DT do
+        	vel.x = ( vel.x + ace.x/1000.0*dt ) * drag.x / 100;
+        	vel.y = ( vel.y + ace.y/1000.0*dt ) * drag.y / 100;
+            pos.x = pos.x + vel.x*dt;
+            pos.y = pos.y + vel.y*dt;
+        end
+    with
+        every SDL_REDRAW do
+            _SDL_SetRenderDrawColor(&&this.ren, 0x00,0x00,0xFF,0x00);
+            r.x = pos.x / 1000;
+            r.y = pos.y / 1000;
+            _SDL_RenderFillRect(&&this.ren, &&r);       
+        end
+    end
+end
+
+
+// Player modificado para usar o objeto fisico. Classe player apenas controla os comandos
+class Player with
+	// Interface
+    var _SDL_Renderer& ren;	
+
+	function (void)=>PhysOrganism& getPhysOrg;	
+do
+	var PhysOrganism po = PhysOrganism.build(&ren,400*1000,400*1000,60,30);
+
+	// Funcoes internas - Dependentes
+	function (void)=>PhysOrganism& getPhysOrg do
+		return &(this.po);
+	end    
+
+    par do
+		// Bla bla bla
+    with
+        par do
+            loop do
+                var _SDL_KeyboardEvent&& key;
+                key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_LEFT;
+                po.ace.x = -400;
+                key = await SDL_KEYUP   until key:keysym.sym==_SDLK_LEFT;
+                po.ace.x = 0;
+            end
+        with
+            loop do
+                var _SDL_KeyboardEvent&& key;
+                key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_RIGHT;
+                po.ace.x = 400;
+                key = await SDL_KEYUP   until key:keysym.sym==_SDLK_RIGHT;
+                po.ace.x = 0;
+            end
+        end
+    end
+end
+
+
+
+// RAFAEL - Teste de nova classe anexavel
+class Gira with 
+	var _SDL_Renderer& ren;
+	var PhysOrganism& po;
+	var Vetor2D desloc = Vetor2D( 0 , 0 );
+	var int raio = 20;
+	var RGBA cor = RGBA( 0x00 , 0x00 , 0x00 , 0x00 );	
+do		
+	// RAFAEL - Teste de geração em loop
+	var _SDL_Rect[12] rects = [];
+		loop i in 12 do
+			rects[i] = _SDL_Rect( 0 , 0 , 5 , 5 );
+		end	
+	var float rad_esp = ( 2 * 3.1415 ) / 12;
+	var float rad_pos = 0;
+	
+	par do
+	    every dt in SDL_DT do
+			rad_pos = rad_pos + ( this.po.vel.x / 1000.0 * dt / this.raio );
+        end
+    with
+        every SDL_REDRAW do
+            _SDL_SetRenderDrawColor(&&this.ren, cor.r , cor.g , cor.b , cor.a );
+			loop i in 12 do
+				rects[i].x = (this.po.pos.x/1000) + this.desloc.x + ( this.raio * _cos( ( i * rad_esp ) + rad_pos ) );
+				rects[i].y = (this.po.pos.y/1000) + this.desloc.y + ( this.raio * _sin( ( i * rad_esp ) + rad_pos ) );
+				_SDL_RenderFillRect(&&this.ren, &&rects[i]); 
+			end	 
+        end 
+	end	
+end
+
+// INICIO DO LOOP DE JOGO
+
+_srand(_time(null));
+
+par/or do
+    await SDL_QUIT;
+with
+    every SDL_REDRAW do
+        _SDL_SetRenderDrawColor(&&renderer!,
+                                0xFF,0xFF,0xFF,0x00);
+        _SDL_RenderFillRect(&&renderer!, null);
+    end
+with
+    var Cloud[3] _ with
+        var int w = 50 + _rand()%200;
+        var int h = 20 + _rand()%50;
+        var int y = h + _rand()%200;
+        this.ren = &renderer!;
+        this.r   = _SDL_Rect(0,y,w,h);
+        this.vx  = 10 + _rand()%50;
+    end;
+
+    var Player p with
+        this.ren = &renderer!;
+    end;
+    
+    
+    // Inicializa Anexavel
+    var Gira _ with
+        this.ren = &renderer!;
+		this.po = &(p.getPhysOrg());
+		this.desloc.x = 0;
+		this.desloc.y = this.po.tam.y;
+		this.raio = 15;
+    end;
+    var Gira _ with
+        this.ren = &renderer!;
+		this.po = &(p.getPhysOrg());
+		this.desloc.x = this.po.tam.x;
+		this.desloc.y = this.po.tam.y;
+		this.raio = 15;
+    end;     
+
+    await FOREVER;
+with
+    every SDL_REDRAW do
+        _SDL_RenderPresent(&&renderer!);
+    end
+end
+
+escape 0;
+
+// e63b95a6905d278fb2ea187f8cad63ede552b4d6
