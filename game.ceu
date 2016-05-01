@@ -1,5 +1,11 @@
 #include "sdl.ceu"
 
+#define WIN_W 640000
+#define WIN_H 480000
+#define MAX_GOTAS_PORSEGUNDO 100
+#define MIN_GOTAS_PORSEGUNDO 10
+native @nohold _printf;
+
 // Estruturas de dados
 data Vetor2D with
 	var int x,y;
@@ -18,10 +24,7 @@ input _SDL_MouseButtonEvent&& SDL_MOUSEBUTTONDOWN;
 
 var _SDL_Window&? window;
     finalize
-        window = &_SDL_CreateWindow("Jogo",
-                    _SDL_WINDOWPOS_UNDEFINED,
-                    _SDL_WINDOWPOS_UNDEFINED,
-                    640, 480, _SDL_WINDOW_SHOWN);
+        window = &_SDL_CreateWindow("Jogo", _SDL_WINDOWPOS_UNDEFINED, _SDL_WINDOWPOS_UNDEFINED, WIN_W/1000 , WIN_H/1000 , _SDL_WINDOW_SHOWN);
     with
         _SDL_DestroyWindow(&&window!);
     end
@@ -33,57 +36,20 @@ var _SDL_Renderer&? renderer;
         _SDL_DestroyRenderer(&&renderer!);
     end
 
-class Cloud with
-    var _SDL_Renderer& ren;
-    var _SDL_Rect      r;
-    var int            vx;
-do
-    var int x = -this.r.w * 1000;
-    par do
-        every dt in SDL_DT do
-            x = x + this.vx*dt;
-            if x > 640000 then
-                x = 0;
-            end
-        end
-    with
-        every SDL_REDRAW do
-            _SDL_SetRenderDrawColor(&&this.ren,
-                                    0xDD,0xDD,0xDD,0x00);
-            this.r.x = x / 1000;
-            _SDL_RenderFillRect(&&this.ren, &&this.r);
-        end
-    end
-end
-
-class AccelField with
-
-do
-
-end
-
-
-// Organismo do campo de aceleracao resultante
-class CompositeAccelField with
-	// Retorna minha aceleracao
-	function (Vetor2D pos)=>Vetor2D getAccelVector;	
-do
-	function (Vetor2D pos)=>Vetor2D getAccelVector do
-		//return 100;
-	end
-end
-
-
 // RAFAEL - Teste de organismo pai - PhysOrganism
 class PhysOrganism with 
 	var _SDL_Renderer& ren;	
 	
 	var Vetor2D pos = Vetor2D( 0 , 0 );
 	var Vetor2D vel = Vetor2D( 0 , 0 );
+	var int vel_mod = 0;
 	var Vetor2D ace = Vetor2D( 0 , 0 );
-	var Vetor2D drag = Vetor2D ( 95 , 0 );
-	
+	var Vetor2D drag = Vetor2D ( 95 , 95 );	
 	var Vetor2D tam = Vetor2D( 10 , 10 );
+	
+	var _SDL_Rect r = _SDL_Rect( pos.x , pos.y , tam.x , tam.y );
+	
+	var RGBA cor = RGBA( 0x00 , 0x00 , 0x00 , 0x00 );	
 	
 	// Construtor
 	function (_SDL_Renderer& ren, int x, int y, int sx, int sy)=>PhysOrganism build;
@@ -92,77 +58,37 @@ do
 	function (_SDL_Renderer& ren, int x, int y, int sx, int sy)=>PhysOrganism build do
 		this.ren 		= &ren;
 		this.pos.x  	= x;
-		this.pos.y		= x;
+		this.pos.y		= y;
 		this.tam.x		= sx;
 		this.tam.y		= sy;
 	end
 
-	// Variaveis internas
-	var _SDL_Rect r = _SDL_Rect( pos.x , pos.y , tam.x , tam.y );
-
 	par do
-        every dt in SDL_DT do
-        	vel.x = ( vel.x + ace.x/1000.0*dt ) * drag.x / 100;
-        	vel.y = ( vel.y + ace.y/1000.0*dt ) * drag.y / 100;
-            pos.x = pos.x + vel.x*dt;
-            pos.y = pos.y + vel.y*dt;
-        end
-    with
-        every SDL_REDRAW do
-            _SDL_SetRenderDrawColor(&&this.ren, 0x00,0x00,0xFF,0x00);
-            r.x = pos.x / 1000;
-            r.y = pos.y / 1000;
-            _SDL_RenderFillRect(&&this.ren, &&r);       
-        end
-    end
+	    every dt in SDL_DT do
+	    	vel.x = ( vel.x + ace.x/1000.0*dt ) * drag.x / 100;
+	    	vel.y = ( vel.y + ace.y/1000.0*dt ) * drag.y / 100;
+	    	vel_mod = _sqrt( _pow(vel.x , 2) + _pow(vel.y , 2) );
+	        pos.x = pos.x + vel.x*dt;
+	        pos.y = pos.y + vel.y*dt;
+	    end
+	with
+	    every SDL_REDRAW do
+	        _SDL_SetRenderDrawColor(&&this.ren, cor.r , cor.g , cor.b , cor.a );
+	        r.x = pos.x / 1000;
+	        r.y = pos.y / 1000;
+	        r.w = tam.x;
+	        r.h = tam.y;
+	        _SDL_RenderFillRect(&&this.ren, &&r);       
+	    end
+	end
 end
 
-
-// Player modificado para usar o objeto fisico. Classe player apenas controla os comandos
-class Player with
-	// Interface
-    var _SDL_Renderer& ren;	
-
-	function (void)=>PhysOrganism& getPhysOrg;	
-do
-	var PhysOrganism po = PhysOrganism.build(&ren,400*1000,400*1000,60,30);
-
-	// Funcoes internas - Dependentes
-	function (void)=>PhysOrganism& getPhysOrg do
-		return &(this.po);
-	end    
-
-    par do
-		// Bla bla bla
-    with
-        par do
-            loop do
-                var _SDL_KeyboardEvent&& key;
-                key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_LEFT;
-                po.ace.x = -400;
-                key = await SDL_KEYUP   until key:keysym.sym==_SDLK_LEFT;
-                po.ace.x = 0;
-            end
-        with
-            loop do
-                var _SDL_KeyboardEvent&& key;
-                key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_RIGHT;
-                po.ace.x = 400;
-                key = await SDL_KEYUP   until key:keysym.sym==_SDLK_RIGHT;
-                po.ace.x = 0;
-            end
-        end
-    end
-end
-
-
-
-// RAFAEL - Teste de nova classe anexavel
+// Roda anexavel a outro PhysOrganism
 class Gira with 
 	var _SDL_Renderer& ren;
 	var PhysOrganism& po;
 	var Vetor2D desloc = Vetor2D( 0 , 0 );
-	var int raio = 20;
+	var int raio = 15;
 	var RGBA cor = RGBA( 0x00 , 0x00 , 0x00 , 0x00 );	
 do		
 	// RAFAEL - Teste de geração em loop
@@ -174,8 +100,9 @@ do
 	var float rad_pos = 0;
 	
 	par do
-	    every dt in SDL_DT do
-			rad_pos = rad_pos + ( this.po.vel.x / 1000.0 * dt / this.raio );
+	    every dt in SDL_DT do	    	
+	    	var int s = 1; if( this.po.vel.x < 0 ) then s = -1; end
+			rad_pos = rad_pos + ( s * this.po.vel_mod / 1000.0 * dt / this.raio );
         end
     with
         every SDL_REDRAW do
@@ -189,6 +116,222 @@ do
 	end	
 end
 
+// Gota de chuva
+class Gota with
+    var _SDL_Renderer& ren;	
+    var Vetor2D pos = Vetor2D( 0 , 0 );
+    var Vetor2D vel = Vetor2D( 0 , 0 );
+	var int tam = 2;
+   	
+	event void terminate;
+	event void decay;
+	
+	function (void)=>PhysOrganism& getPhysOrg;
+	function (void)=>int test;
+do
+	var PhysOrganism po = PhysOrganism.build(&ren,pos.x, pos.y,2,5);
+	po.drag = Vetor2D( 98 , 98 );
+	po.vel = Vetor2D( this.vel.x , this.vel.y );
+	po.ace.y = 500;	
+	this.po.cor = RGBA( 0x00 , 0x76 , 0xd1 , 0 );
+		
+	function (void)=>PhysOrganism& getPhysOrg do
+		return &(this.po);
+	end  
+	
+	function (void)=>int test do
+		return po.ace.y;
+	end
+	
+	par/or do
+	    every dt in SDL_DT do	  
+	    	if ( po.pos.y > WIN_H-2000 ) then 
+	    		po.pos.y  = WIN_H-2000;
+	    		po.vel.y = -(po.vel.y*2/3);
+				emit this.decay;
+	    	end
+	    	if ( (po.pos.x > WIN_W) | (po.pos.y < 0) | ( po.pos.x < 0 ) ) then emit this.terminate; end
+	    	// Tamanho da gota de acordo com a velocidade
+	    	var int abs_vx = _abs( po.vel.x );
+	    	var int abs_vy = _abs( po.vel.y );
+	    	if abs_vx > abs_vy then
+	    		po.tam.x = tam * ( 1 + ( ( abs_vx - abs_vy ) / 100 ) );
+	    		po.tam.y = tam;
+	    	else
+	    		po.tam.x = tam;	  
+	    		po.tam.y = tam * ( 1 + ( ( abs_vy - abs_vx ) / 100 ) );  		
+	    	end
+        end
+    with
+    	await this.terminate;
+	with
+		await this.decay;
+		await 2s;
+    end
+end 
+
+// Player modificado para usar o objeto fisico. Classe player apenas controla os comandos
+class Player with
+    var _SDL_Renderer& ren;	
+
+	function (void)=>PhysOrganism& getPhysOrg;	
+do
+	var PhysOrganism po = PhysOrganism.build(&ren,320*1000,430*1000,60,30);
+
+	// Funcoes internas - Dependentes
+	function (void)=>PhysOrganism& getPhysOrg do
+		return &(this.po);
+	end    
+	this.po.cor = RGBA( 0x2d , 0x76 , 0x2c , 0 );
+
+    par do
+        loop do
+            var _SDL_KeyboardEvent&& key;
+            key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_LEFT;
+            po.ace.x = -400;
+            key = await SDL_KEYUP   until key:keysym.sym==_SDLK_LEFT;
+            po.ace.x = 0;
+        end
+    with
+        loop do
+            var _SDL_KeyboardEvent&& key;
+            key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_RIGHT;
+            po.ace.x = 400;
+            key = await SDL_KEYUP   until key:keysym.sym==_SDLK_RIGHT;
+            po.ace.x = 0;
+        end
+    end
+end
+
+// Gerencia colisões
+class Colisor with
+	pool Gota[] gotas;
+	var PhysOrganism& po;
+	function (PhysOrganism& po)=>Colisor build;
+do
+	function (PhysOrganism& po)=>Colisor build do
+		this.po = &po;
+	end
+	
+	every dt in SDL_DT do	
+		/*	
+		loop go in gotas do
+			loop go2 in gotas do
+				if go!=go2 and _SDL_HasIntersection( &&(go:getPhysOrg().r) , &&(go2:getPhysOrg().r) ) then	
+					//emit go:decay;
+				end
+			end
+		end
+		*/
+		loop go in gotas do		
+			var PhysOrganism& goPo = &(go:getPhysOrg());
+			if _SDL_HasIntersection( &&(po.r) , &&(goPo.r) ) then
+				goPo.pos.y = po.pos.y - (goPo.tam.y*1000);		
+				goPo.vel.y = -( goPo.vel.y / 4 );			
+				goPo.vel.x = po.vel.x / 2;
+			end
+		end
+	end
+end
+
+// Nuvem
+class Cloud with
+    var _SDL_Renderer& ren;
+    var _SDL_Rect      r;
+    var int            vx;
+    var int frequencia = 100; 
+    var Colisor& colisor;
+    
+	// Construtor
+	function (_SDL_Renderer& ren, Colisor& test, int frequencia)=>Cloud build;
+do			
+	// Implementação do construtor
+	function (_SDL_Renderer& ren , Colisor& colisor, int frequencia)=>Cloud build do
+		var int w = 100 + _rand()%100;
+		var int h = 20 + _rand()%50;
+		var int y = 5 + _rand()%150;
+		this.ren = &ren;
+		this.r   = _SDL_Rect(0,y,w,h);
+		this.vx  = 10 + _rand()%50;	
+		this.colisor = &colisor;
+		this.frequencia = frequencia;
+	end	
+	
+    var Vetor2D pos_nuvem = Vetor2D( -this.r.w * 1000 , 0);
+	var int frequencia_atual = frequencia;   
+    var int maxy = 2 * 1000/MIN_GOTAS_PORSEGUNDO;
+	var int ty = (maxy-(frequencia_atual*2));
+	if ty < 0 then ty = 0; end
+	this.r.y = ty;
+	var RGBA cor = RGBA( 200-(200*ty/maxy) , 200-(200*ty/maxy) , 200-(200*ty/maxy) , 0 );
+    
+    par do // Criador de chuva -----------------------------	
+    	every (frequencia_atual)ms do
+			spawn Gota in colisor.gotas with
+				this.ren = &ren;
+				this.pos = Vetor2D( (_rand() % r.w + r.x) * 1000 , (r.y+r.h) * 1000 );
+				this.vel.x = vx;
+			end;	
+    	end
+	with // Mudança gradual de frequencia -----------------------------			
+		loop do 			
+			if frequencia != frequencia_atual then	
+				if _abs(frequencia - frequencia_atual) < 1 then frequencia_atual = frequencia;
+				else/if (frequencia - frequencia_atual) > 0 then frequencia_atual = frequencia_atual + 1;
+				else frequencia_atual = frequencia_atual - 1; end
+								
+				ty = (maxy-(frequencia_atual*2));
+				if ty < 0 then ty = 0; end
+				this.r.y = ty;
+				cor.r =  200-(200*ty/maxy); cor.g = cor.r; cor.b = cor.r;
+			end			
+			await 50ms;	
+		end
+    with // Movimento em X -----------------------------	
+        every dt in SDL_DT do
+            pos_nuvem.x = pos_nuvem.x + this.vx*dt;
+            if pos_nuvem.x > 640000 then	pos_nuvem.x = -this.r.w * 1000;	end   
+        end
+    with // Redraw -----------------------------	
+        every SDL_REDRAW do
+            _SDL_SetRenderDrawColor(&&this.ren, cor.r , cor.g , cor.b , cor.a );
+            this.r.x = pos_nuvem.x / 1000;
+            _SDL_RenderFillRect(&&this.ren, &&this.r);
+        end
+    end
+end
+
+// Criador de gotas de chuva e verificador de colisao
+class Temporal with
+	var _SDL_Renderer& ren;	
+	var Colisor& colisor;
+		
+	pool Gota[] gotas;
+	var int nuvem_qtd = 3;
+do	
+	pool Cloud[] nuvens;	
+	var int gotas_pseg_atual = 0;
+		
+	// Inicia Temporal 
+	loop i in nuvem_qtd do
+		var int gps = ( _rand()%(MAX_GOTAS_PORSEGUNDO-gotas_pseg_atual) )+MIN_GOTAS_PORSEGUNDO;
+		gotas_pseg_atual = gotas_pseg_atual + gps;
+		spawn Cloud.build(&ren,&colisor, 1000/gps) in nuvens;
+	end 
+	// Varia tempo
+	loop do
+		await ( (_rand()%10) + 1 )s;
+		loop n in nuvens do
+			if (_rand()%nuvem_qtd) > 0 then
+				gotas_pseg_atual = gotas_pseg_atual - (1000 / n:frequencia);
+				var int gps = ( _rand()%(MAX_GOTAS_PORSEGUNDO-gotas_pseg_atual) )+MIN_GOTAS_PORSEGUNDO;
+				gotas_pseg_atual = gotas_pseg_atual + gps;
+				n:frequencia = 1000/gps;
+			end
+		end	
+	end
+end
+
 // INICIO DO LOOP DE JOGO
 
 _srand(_time(null));
@@ -197,40 +340,36 @@ par/or do
     await SDL_QUIT;
 with
     every SDL_REDRAW do
-        _SDL_SetRenderDrawColor(&&renderer!,
-                                0xFF,0xFF,0xFF,0x00);
+        _SDL_SetRenderDrawColor(&&renderer!,0xFF,0xFF,0xFF,0x00);
         _SDL_RenderFillRect(&&renderer!, null);
     end
 with
-    var Cloud[3] _ with
-        var int w = 50 + _rand()%200;
-        var int h = 20 + _rand()%50;
-        var int y = h + _rand()%200;
-        this.ren = &renderer!;
-        this.r   = _SDL_Rect(0,y,w,h);
-        this.vx  = 10 + _rand()%50;
-    end;
 
+	// Inicializa Jogador
     var Player p with
         this.ren = &renderer!;
     end;
     
+	// Tratador de colisoes
+	var Colisor colisor = Colisor.build( &(p.getPhysOrg()) );    
+    
+	// Inicia controlador de chuva
+	var Temporal nuvens with
+		this.ren = &renderer!;
+		this.colisor = &colisor;
+	end;
     
     // Inicializa Anexavel
-    var Gira _ with
-        this.ren = &renderer!;
+	var Gira _ with
+	    this.ren = &renderer!;
 		this.po = &(p.getPhysOrg());
-		this.desloc.x = 0;
-		this.desloc.y = this.po.tam.y;
-		this.raio = 15;
-    end;
-    var Gira _ with
-        this.ren = &renderer!;
+		this.desloc = Vetor2D( 0 , this.po.tam.y);
+	end;
+	var Gira _ with
+	    this.ren = &renderer!;
 		this.po = &(p.getPhysOrg());
-		this.desloc.x = this.po.tam.x;
-		this.desloc.y = this.po.tam.y;
-		this.raio = 15;
-    end;     
+		this.desloc = Vetor2D( this.po.tam.x , this.po.tam.y);
+	end; 
 
     await FOREVER;
 with
