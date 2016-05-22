@@ -1,0 +1,869 @@
+#include "sdl.ceu"
+
+#define SPEED 200
+
+#define WIN_W 500000
+#define WIN_H 500000
+#define PI 3.14159265
+
+native @nohold _printf;
+
+
+native do
+	typedef struct pathNode { 
+		int x;
+		int y;
+		int d; // Para os não vice é a distancia até o vice. Para o vice é a distancia até o finish.
+		struct pathNode* next;
+	} PathNode;
+	
+	typedef struct path { 
+		PathNode* start;
+		PathNode* vice;
+		PathNode* finish;
+	} Path;
+
+	static Path gPath = { 0 , 0 , 0 };
+	static int debugNodes = 0;
+	
+	// Prepara estrutura para ser utilizada 
+	void PTH_init( int x , int y ) {
+		PathNode* newNode;
+		int dist, dx, dy;
+		
+		newNode = (PathNode*) malloc(sizeof(PathNode));
+		
+		newNode->x = x;
+		newNode->y = y;
+		newNode->d = 0;
+		newNode->next = 0;
+		
+		gPath.finish = newNode;
+		
+		newNode = (PathNode*) malloc(sizeof(PathNode));
+		newNode->x = x;
+		newNode->y = y;
+		newNode->d = 0;
+		newNode->next = gPath.finish;
+		
+		gPath.start = newNode;
+		gPath.vice = newNode;	
+		
+	}	
+	
+	// Destroi estrutura
+	void PTH_destroi( void ) {
+		PathNode *tNode , *freeNode;
+		
+		if( !gPath.finish ) {
+			return;
+		}
+		else if( gPath.finish && !gPath.start ) {
+			free(gPath.finish);
+			return;			
+		} else {
+			tNode = gPath.start;
+			while( tNode ) {
+				freeNode = tNode;
+				tNode = tNode->next;
+				free(freeNode);
+			}
+			return;
+		}
+	}	
+	
+	// Remove todos os nodes antes do parametro node
+	void PTH_deleteUpTo( int node ) {	
+		PathNode *freeNode , *sNode , *tNode;
+		
+		sNode = (PathNode*)(node);		
+		tNode = gPath.start;
+		
+		while( tNode != sNode ) {
+			freeNode = tNode;
+			tNode = tNode->next;
+			free(freeNode);
+		}
+		
+		gPath.start = sNode;
+	}	
+	
+	// Atualiza o no final e o vice(reflexo da alteracao do finish)
+	void PTH_updateFinish( int x , int y ) {
+		int dist, dx, dy;
+		
+		gPath.finish->x = x;
+		gPath.finish->y = y;
+
+		dx = x - (gPath.vice->x);
+		dy = y - (gPath.vice->y);	
+		dist = sqrt( pow(dx , 2) + pow(dy , 2) );	
+		gPath.vice->d = dist;		
+	}
+		
+	// Retorna o nó final
+	int PTH_getFinishNode(void) {
+		return ((int)gPath.finish);
+	}
+	
+	// Retorna o nó vice
+	int PTH_getViceNode(void) {
+		return ((int)gPath.vice);
+	}	
+	
+	// Muda os valores de *x e *y para os valores de x e y de *node
+	void PTH_getNodePos( int* node , int *x , int *y ) {
+		PathNode* tNode;
+		tNode = (PathNode*)(*node);
+		(*x) = tNode->x;
+		(*y) = tNode->y;
+	}
+	
+	// Debug, imprime cadeia de nos
+	void PTH_printChain(void) {
+		PathNode* pn;
+		int i = 0;		
+		
+		pn = gPath.start;
+		printf("\nStart: %u \tFinish: %u\n", gPath.start , gPath.finish );
+		
+		while( pn ) {
+			printf("%u(%d,%d)| ", pn , pn->x , pn->y );
+			pn = pn->next;
+			i++;
+		}
+		printf("\nTota Nodes: %d \n",i);
+	}
+	
+	// Adiciona um nó vice que é uma copia do finish	
+	void PTH_addViceNode( void ) {
+		PathNode* newNode;
+		int dist, dx, dy;
+		
+		newNode = (PathNode*) malloc(sizeof(PathNode));
+		
+		newNode->x = gPath.finish->x;
+		newNode->y = gPath.finish->y;
+		newNode->d = 0;
+		newNode->next = gPath.finish;
+		
+		//Atualiza lista
+		if( gPath.start == 0 ) gPath.start = newNode;
+		if( gPath.vice ) {
+			gPath.vice->next = newNode;
+			// Pega a distancia do ultimo ponto para o novo
+			dx = (newNode->x) - (gPath.vice->x);
+			dy = (newNode->y) - (gPath.vice->y);	
+			dist = sqrt( pow(dx , 2) + pow(dy , 2) );			
+		}
+		gPath.vice = newNode;
+
+		//Atualiza todos os pontos anteriores
+		newNode = gPath.start;
+		while( newNode != gPath.vice ) {
+			newNode->d = newNode->d + dist;
+			newNode = newNode->next;
+		}
+					
+		//debugNodes++;
+		//printf("\nNodes qtd: %d\n",debugNodes);		
+	}
+	
+	// Muda *x e *y para as novas coordenas partindo de um no "move" dentro deste no
+	// NAO CHECA SE A DISTANCIA ULTRAPASSARA A POSICAO DO PROXIMO NODE
+	void PTH_moveInNode( PathNode* node , int move , int* x , int* y ) {
+		int dist , dx , dy;
+		float proportion;
+
+		dx = (node->next->x) - (*x);
+		dy = (node->next->y) - (*y);	
+		dist = sqrt( pow(dx , 2) + pow(dy , 2) );
+				
+		proportion = 1.0 * move / dist;
+			
+		(*x) = (*x) + ( dx * proportion );
+		(*y) = (*y) + ( dy * proportion );	
+				
+		return;
+	}	
+
+	// Muda *x e *y para as novas coordenas partindo de um no e andando "move" no caminho
+	// Mantem uma distancia minDist da chegada.
+	void PTH_moveInPath( int* node , int move , int* x , int* y , int minDistToFinish ) {
+		int dist , dx , dy;
+		int distToFinish;
+		PathNode* tempNode;	
+		
+		tempNode = (PathNode*)(*node);
+		if( !( tempNode->next ) ) return;
+		
+		move = 2.0 * move / 1000;	
+		dx = (tempNode->next->x) - (*x);
+		dy = (tempNode->next->y) - (*y);	
+		dist = sqrt( pow(dx , 2) + pow(dy , 2) );
+		distToFinish = dist + tempNode->next->d + gPath.vice->d;		
+		if( distToFinish < minDistToFinish ) return;
+			
+		while(1) {			
+			//Atualiza move baseado na distancia maxima q pode-se percorrer
+			if( ( distToFinish - move ) < minDistToFinish ) {
+					move = distToFinish - minDistToFinish;
+					if( move < 0 ) move = 0;			
+			}
+			
+			//Se o move for menor que a distancia para o proximo no, nao muda o no
+			if( move < dist ) {
+				(*node) = tempNode;
+				PTH_moveInNode( tempNode , move , x , y );
+				return;
+			}
+			//Move é maior do q a distancia para o proximo no, muda para o proximo no
+			else {
+				if( tempNode->next->d > 0 ) {
+					distToFinish = distToFinish - dist;
+					move = move - dist;	
+					tempNode = tempNode->next;	
+					dx = (tempNode->next->x) - (tempNode->x);
+					dy = (tempNode->next->y) - (tempNode->y);
+					dist = sqrt( pow(dx , 2) + pow(dy , 2) );
+				} else {
+					(*node) = tempNode;
+					PTH_moveInNode( tempNode , move , x , y );
+					return;				
+				}	
+			}					
+		}
+	}
+end 
+// Native END
+
+
+// Janela e Render
+input void SDL_REDRAW;
+input void SDL_QUIT;
+input int  SDL_DT;
+input _SDL_KeyboardEvent&& SDL_KEYDOWN;
+input _SDL_KeyboardEvent&& SDL_KEYUP;
+input _SDL_MouseButtonEvent&& SDL_MOUSEBUTTONDOWN;
+
+var _SDL_Window&? window;
+    finalize
+        window = &_SDL_CreateWindow("Boitata", _SDL_WINDOWPOS_UNDEFINED, _SDL_WINDOWPOS_UNDEFINED, WIN_W/1000 , WIN_H/1000 , _SDL_WINDOW_SHOWN);
+    with
+        _SDL_DestroyWindow(&&window!);
+    end
+
+var _SDL_Renderer&? renderer;
+    finalize
+        renderer = &_SDL_CreateRenderer(&&window!, -1, 0);
+    with
+        _SDL_DestroyRenderer(&&renderer!);
+    end
+
+/* --------------------------------------------------------------------------
+	Geometria
+--------------------------------------------------------------------------*/
+data Vetor2D with
+	var int x,y;
+end;
+
+data RGBA with
+	var int r,g,b,a;
+end;
+
+// Pseudo Circulo feito de retangulos
+#define CIRCLOID_RESOLUTION 6
+class GEO_Circloid with  
+	var _SDL_Renderer& 	ren;
+	var Vetor2D			center		= Vetor2D( 0 , 0 );
+	var int				radius 		= 10;
+	var RGBA			color 		= RGBA( 0x00 , 0x00 , 0x00 , 0x00 );	
+	var _SDL_Rect 		colisionBox	= _SDL_Rect( 0 , 0 , 0 , 0 );
+do
+	var _SDL_Rect[CIRCLOID_RESOLUTION] rects = []; 
+
+	// Calcula passo entre os retangulos ( angulo )
+	var float 			step 		= 88.0 / (CIRCLOID_RESOLUTION + 1) / 180 * PI;
+	
+	// Inicializa retangulos
+	loop i in CIRCLOID_RESOLUTION do	
+		rects[i] = _SDL_Rect( 0 , 0 , radius , radius );
+	end 
+	
+	// Inicializa caixa de colisao
+	colisionBox = _SDL_Rect( 0 , 0 , _cos(PI/4) * radius * 2 , _sin(PI/4) * radius * 2 );
+
+	// Loop funcional
+	par/or do
+		every dt in SDL_DT do
+			colisionBox.x = center.x - ( colisionBox.w / 2 );
+			colisionBox.y = center.y - ( colisionBox.h / 2 );
+		end
+	with
+		every SDL_REDRAW do
+			var float ang = step;	
+			loop i in CIRCLOID_RESOLUTION do	
+				rects[i].w = _cos( ang ) * radius * 2;
+				rects[i].h = _sin( ang ) * radius * 2;
+				rects[i].x = center.x - ( rects[i].w / 2 );
+				rects[i].y = center.y - ( rects[i].h / 2 ); 
+				_SDL_SetRenderDrawColor( &&this.ren , color.r , color.g , color.b , color.a );
+				_SDL_RenderFillRect( &&this.ren , &&(rects[i]) );
+				
+				_SDL_SetRenderDrawColor( &&this.ren , 0xFF , 0xFF , 0xFF , 0x00 );
+				//_SDL_RenderFillRect( &&this.ren , &&(colisionBox) );
+			
+				ang = ang + step;			
+			end
+		end	
+	end
+
+end  
+
+
+
+/* --------------------------------------------------------------------------
+	Fisica
+--------------------------------------------------------------------------*/
+
+
+
+// Oganismo fisico com direção
+class PhysOrganism with
+	var Vetor2D 	size 				= Vetor2D( 0 , 0 );
+	var Vetor2D 	position			= Vetor2D( 0 , 0 );
+	var float 		faceDirection 		= 0;
+	var int 		velocityIntensity 	= 0;
+	var float 		velocityDirection 	= 0;
+	var float 		angularVelocity 	= 0;	
+	var _SDL_Rect	colisionRect		= _SDL_Rect(0,0,0,0);
+	
+	// Retorna posição em X e Y da tela
+	function (void)=>Vetor2D getPosition;
+do
+	// Retorna posição em X e Y da tela
+	function (void)=>Vetor2D getPosition do
+		var Vetor2D vet = Vetor2D( position.x / 1000 , position.y / 1000 );
+		return vet;
+	end
+
+	// Loop Funcional
+	every dt in SDL_DT do
+		// Calcula posição
+		velocityDirection = velocityDirection + ( angularVelocity * dt );
+		position.x = position.x + ( _cos(velocityDirection) * velocityIntensity * dt );
+		position.y = position.y + ( _sin(velocityDirection) * velocityIntensity * dt );
+		colisionRect.x = position.x / 1000;
+		colisionRect.y = position.y / 1000;
+		colisionRect.w = size.x;
+		colisionRect.h = size.y;
+	end
+end
+
+
+
+// Controle do jogador
+class PlayerControls with
+	var PhysOrganism& character;
+	
+do
+	var float defaultTurn = 0.005;
+	var float multi = 1.0;
+	var int turnDirection = 0;
+	var int pilhaA = 0;
+	var int pilhaB = 0;
+    par do
+    	// Controle Direcional da Curva: reação quando solta as teclas ESQ ou DIR
+    	loop do
+            par/or do
+            	var _SDL_KeyboardEvent&& key;
+            	key = await SDL_KEYUP   until key:keysym.sym==_SDLK_LEFT;
+            with
+            	var _SDL_KeyboardEvent&& key;
+            	key = await SDL_KEYUP   until key:keysym.sym==_SDLK_RIGHT;
+            end  
+            pilhaA = pilhaA - 1;
+            if( pilhaA <= 0 ) then
+            	pilhaA = 0;
+		        turnDirection = 0;
+		        character.angularVelocity = 0;
+            end 		
+    	end
+    with
+    	// Controle Direcional da Curva: reação quando aperta ESQ
+        loop do
+            var _SDL_KeyboardEvent&& key;
+            key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_LEFT;
+            turnDirection = -1;
+            character.angularVelocity = defaultTurn * turnDirection * multi;
+            pilhaA = pilhaA + 1;
+            key = await SDL_KEYUP   until key:keysym.sym==_SDLK_LEFT;
+        end
+    with
+    	// Controle Direcional da Curva: reação quando aperta DIR
+        loop do
+            var _SDL_KeyboardEvent&& key;
+            key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_RIGHT;
+            turnDirection = 1;
+            character.angularVelocity = defaultTurn * turnDirection * multi;
+            pilhaA = pilhaA + 1;
+            key = await SDL_KEYUP   until key:keysym.sym==_SDLK_RIGHT;
+        end
+    with
+    	// Controle Raio da Curva: reação quando solta as teclas CIMA ou BAIXO
+    	loop do
+            par/or do
+            	var _SDL_KeyboardEvent&& key;
+            	key = await SDL_KEYUP   until key:keysym.sym==_SDLK_UP;
+            with
+            	var _SDL_KeyboardEvent&& key;
+            	key = await SDL_KEYUP   until key:keysym.sym==_SDLK_DOWN;
+            end  
+            pilhaB = pilhaB - 1;
+            if( pilhaB <= 0 ) then
+            	pilhaB = 0;
+		        multi = 1.0;
+		        character.angularVelocity = defaultTurn * turnDirection;
+            end 		
+    	end
+    with
+    	// Controle Raio da Curva: reação quando aperta CIMA: Diminui raio da Curva
+        loop do
+            var _SDL_KeyboardEvent&& key;
+            key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_UP;
+            multi = 2.0;
+            character.angularVelocity = character.angularVelocity * multi;
+            key = await SDL_KEYUP   until key:keysym.sym==_SDLK_UP;
+        end     
+    with
+    	// Controle Raio da Curva: reação quando aperta BAIXO: Aumenta raio da Curva
+        loop do
+            var _SDL_KeyboardEvent&& key;
+            key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_DOWN;
+            //_PTH_printChain(); //DEBUG
+            multi = 0.5;
+            character.angularVelocity = character.angularVelocity * multi;
+            key = await SDL_KEYUP   until key:keysym.sym==_SDLK_DOWN;
+        end             
+    end
+end
+  
+  
+  
+// Cabeça do boitata
+class BoitataHead with
+	var _SDL_Renderer& 	ren;	
+	var PhysOrganism& 	character;	 
+	
+	function (void)=>GEO_Circloid& getCircloid;
+do
+	// Cabeça
+	var GEO_Circloid head with
+		this.ren = &ren;
+		this.radius = 12;
+		this.center = character.position;
+		this.color = RGBA( 0xFF , 0x00 , 0x00 , 0x00 );
+	end;
+
+	function (void)=>GEO_Circloid& getCircloid do
+		return &(this.head); 
+	end;
+	
+	// Posicao inicial ao caminho
+	var Vetor2D position = character.getPosition();
+	_PTH_init( position.x , position.y );
+	_PTH_addViceNode();
+
+	// Olhos
+	var GEO_Circloid[2] olhos with 
+		this.ren = &ren;
+		this.radius = 4;
+		this.center = character.position;
+		this.color = RGBA( 0xFF , 0xEE , 0x60 , 0x00 );
+	end;	
+
+	// Loop funcional
+	par/or do
+		every dt in SDL_DT do
+			position = character.getPosition();
+		
+			// Posicao da cabeça		
+			head.center.x = position.x;
+			head.center.y = position.y;
+		
+			// Posicao dos olhos
+			olhos[0].center.x = position.x + ( _cos( character.velocityDirection + PI/4 ) * ( head.radius / 2 ) );
+			olhos[0].center.y = position.y + ( _sin( character.velocityDirection + PI/4 ) * ( head.radius / 2 ) );
+			olhos[1].center.x = position.x + ( _cos( character.velocityDirection - PI/4 ) * ( head.radius / 2 ) );
+			olhos[1].center.y = position.y + ( _sin( character.velocityDirection - PI/4 ) * ( head.radius / 2 ) );	
+			
+			// Atualiza o caminho
+			_PTH_updateFinish( position.x , position.y );	
+		end
+	with
+		every 30ms do
+			_PTH_addViceNode();
+		end
+	end	
+end
+
+
+
+// Corpo do Boitata
+class BoitataBody with
+	var _SDL_Renderer& 	ren;	
+	
+	var int&	speed;
+	var int		node;	
+	
+	var int 	minDist		= 10;
+	var int		size		= 10;
+	
+	function (void)=>GEO_Circloid& getCircloid;
+do	
+
+	var GEO_Circloid body with
+		var int x = 0;
+		var int y = 0;
+		_PTH_getNodePos( &&node , &&x , &&y ) finalize with end;	
+		this.ren = &ren;
+		this.radius = size;	
+		this.center = Vetor2D( x , y );	
+	end;	
+	body.color.r = 0xFF;
+	
+	function (void)=>GEO_Circloid& getCircloid do
+		return &(this.body); 
+	end;
+
+	// Loop funcional
+	every dt in SDL_DT do	
+		_PTH_moveInPath( &&node , (speed*1.00*dt) , (&&body.center.x) , (&&body.center.y) , minDist ) finalize with end;		
+	end
+end
+
+
+
+// Boitata integra cabeça e corpo
+class Boitata with
+	var _SDL_Renderer& 	ren;
+	var BoitataHead& 	boitataHead;
+	var	int&			headVelocity;
+	var int				bodyVelocity	= 0;
+	var int				targetSize		= 0;
+	var int				actualSize		= 0;
+
+	event void destroy;  
+	
+	pool BoitataBody[] bodies;
+do
+	bodyVelocity = headVelocity;
+	
+	// Deletador de camiho: deleta nodes obsoletos do caminho
+	var BoitataBody pathEraser with
+		this.ren 		= &ren;	
+		this.node 		= _PTH_getViceNode();
+		this.speed 		= &bodyVelocity;	
+		this.size		= 0;				
+		this.minDist	= 100;
+	end;
+		
+	// Cauda do boitata	
+	var int i = 0;
+	var BoitataBody[4] cauda with 
+		i = i + 1;
+		this.ren 		= &ren;	
+		this.node 		= _PTH_getViceNode();
+		this.speed 		= &bodyVelocity;	
+		this.size		= 5 + ( i * 1 );				
+		this.minDist	= 2 + ( (4-i) * 8 ) + (2*i);
+	end;	
+	
+	par/or do
+		every dt in SDL_DT do	
+			// Deleta nodes obsoletos: depois do final da cauda
+			_PTH_deleteUpTo( (pathEraser.node) );
+			
+			// Cresce boitata
+			if actualSize < targetSize then
+				actualSize = actualSize + 1;
+				var int segDist = 10;
+				// Atualiza distancia minima da cauda
+				loop i in 4 do
+					cauda[i].minDist = cauda[i].minDist + segDist;
+				end
+				// Atualiza distancia minima do resto do corpo
+				loop bo in bodies do
+					bo:minDist = bo:minDist + segDist;
+				end
+				// Atualiza distancia minima do eraser
+				pathEraser.minDist = pathEraser.minDist + segDist;
+				
+				// Cria novo corpo
+				spawn BoitataBody in bodies with
+					this.ren = &ren;	
+					this.node = _PTH_getViceNode();
+					this.speed = &bodyVelocity;
+					this.size = 10;
+				end;				
+			end
+			
+			var int flagDestroy = 0;
+			var _SDL_Rect& headRect = &(boitataHead.getCircloid().colisionBox);	
+			// Checa colisao da cabeca com o resto do corpo								
+			loop bo in bodies do
+				if bo:minDist > 50
+				and _SDL_HasIntersection( &&(bo:getCircloid().colisionBox) , &&(headRect) ) then
+					//_printf("\nPERDEU, MENOR");
+					flagDestroy = 1;
+				end
+			end
+			
+			// Checa colisão da cabeca com os limites da tela
+			// BUG! Esse AND do if é para corrigir um bug q ele sai logo na inicializacao
+			if headRect.x < 0 or headRect.y < 0
+			or ( (headRect.x + headRect.w) > (WIN_W / 1000) and (headRect.x + headRect.w) < (WIN_W / 1000)*1.1 )
+			or ( (headRect.y + headRect.h) > (WIN_H / 1000) and (headRect.y + headRect.h) < (WIN_H / 1000)*1.1 )
+			then
+				flagDestroy = 1;
+			end	
+			
+			// Checa destruicao
+			if flagDestroy == 1 then
+				emit this.destroy;
+			end			
+		end
+	with
+		await 5s;
+		every 500ms do
+			//targetSize = targetSize + 1; //DEBUG
+		end
+	end
+end
+
+ 
+  
+// Caçador a ser caçado pelo boitata
+class Hunter with
+	var _SDL_Renderer& 	ren;	
+	var Boitata&		boitata;
+	
+	var int& scoreValue;
+	var int& scoreHunters;	
+	
+	var Vetor2D		startPos	= Vetor2D( (50 + (_rand()%((WIN_W/1000)-100)))*1000 , (50 + (_rand()%((WIN_H/1000)-100)))*1000 );	
+	var int			value 		= (_rand()%100) + 50;
+	var _SDL_Rect 	sensorBox	= _SDL_Rect( 0 , 0 , 0 , 0 );
+	
+	event void decay; 
+	event void destroy;    
+	
+	function (void)=>GEO_Circloid& getCircloid;
+	
+do
+	// Corpo fisico
+	var PhysOrganism hunterPO with
+		this.velocityIntensity = value;
+		this.position = startPos;
+		this.velocityDirection = 2.0 * PI * (_rand()%10000) / 10000;
+	end;	
+	
+	// Corpo
+	var GEO_Circloid hunter with
+		this.ren = &ren;
+		this.center = startPos;
+		this.radius = 12;		
+		this.color = RGBA( 0x00 , 0xFF , 0x00 , 0x00 );
+	end;
+	
+	// Colisor
+	sensorBox.x = hunterPO.position.x;
+	sensorBox.x = hunterPO.position.x;
+	sensorBox.w = hunter.radius;
+	sensorBox.h = hunter.radius;
+
+	function (void)=>GEO_Circloid& getCircloid do
+		return &(this.hunter); 
+	end;
+
+	// Olhos
+	var GEO_Circloid[2] olhos with 
+		this.ren = &ren;
+		this.center = startPos;
+		this.radius = 4;
+		this.color = RGBA( 0x00 , 0xAA , 0xFF , 0x00 );
+	end;	
+	
+	// Variaveis internas
+	var Vetor2D position = hunterPO.getPosition();
+	var float colorScaleFactor = 1.0*255/value;
+
+	// Loop funcional
+	par/or do
+		every dt in SDL_DT do
+			position = hunterPO.getPosition();
+		
+			// Posicao da hunter		
+			hunter.center.x = position.x;
+			hunter.center.y = position.y;
+		
+			// Posicao dos olhos
+			olhos[0].center.x = position.x + ( _cos( hunterPO.velocityDirection + PI/4 ) * ( hunter.radius / 2 ) );
+			olhos[0].center.y = position.y + ( _sin( hunterPO.velocityDirection + PI/4 ) * ( hunter.radius / 2 ) );
+			olhos[1].center.x = position.x + ( _cos( hunterPO.velocityDirection - PI/4 ) * ( hunter.radius / 2 ) );
+			olhos[1].center.y = position.y + ( _sin( hunterPO.velocityDirection - PI/4 ) * ( hunter.radius / 2 ) );	
+			
+			// Posicao do sensor
+			sensorBox.x = position.x - (sensorBox.w/2) + ( _cos( hunterPO.velocityDirection ) * ( hunter.radius * 1.5 ) );
+			sensorBox.y = position.y - (sensorBox.h/2) + ( _sin( hunterPO.velocityDirection ) * ( hunter.radius * 1.5 ) );
+			
+			// Colisão com as laterias
+			if sensorBox.x < 0 then 
+				hunterPO.velocityDirection = -(PI/2.0) + (0.1*PI) + (PI*0.01*(_rand()%80));
+			else/if sensorBox.y < 0 then
+				hunterPO.velocityDirection = (0.1*PI) + (PI*0.01*(_rand()%80));
+			else/if (sensorBox.x - (sensorBox.w/2) ) > (WIN_W/1000) then
+				hunterPO.velocityDirection = (PI/2.0) + (0.1*PI) + (PI*0.01*(_rand()%80));
+			else/if (sensorBox.y - (sensorBox.h/2) ) > (WIN_H/1000) then
+				hunterPO.velocityDirection = PI - (0.1*PI) + (PI*0.01*(_rand()%80));				
+			end
+			
+			// Colisão com o corpo do boitata			
+			loop bo in boitata.bodies do
+				//bodyRect = bo:getCircloid().colisionBox;
+				if bo:minDist > 30
+				and _SDL_HasIntersection( &&(bo:getCircloid().colisionBox) , &&(sensorBox) ) then
+					hunterPO.velocityDirection = hunterPO.velocityDirection + PI;
+				end
+			end				
+			
+			// Colisão com a cabeça do boitata		
+			if 	_SDL_HasIntersection( &&(hunter.colisionBox) , &&(boitata.boitataHead.getCircloid().colisionBox) ) then
+				scoreHunters = scoreHunters + 1;				
+				if value > 0 then
+					scoreValue = 50 + scoreValue + value;
+					boitata.targetSize = boitata.targetSize + 3;
+				else
+					scoreValue = scoreValue + value;
+				end
+				emit this.destroy;
+			end		
+		end
+	with
+		// Diminui pontuacao
+		every 1000ms do
+			value = value - 10;
+			if value > 0 then
+				hunterPO.velocityIntensity = value;
+				hunter.color.g = value * colorScaleFactor;
+			else
+				value = -100;
+				hunter.color.g = 0;
+				hunterPO.velocityIntensity = 0;
+				olhos[0].color = RGBA( 0xFF , 0xFF , 0xFF , 0 );
+				olhos[1].color = RGBA( 0xFF , 0xFF , 0xFF , 0 );
+				emit this.decay;
+			end
+			
+		end
+	with
+		// Comportamento do Hunter
+		var int dx = 0;
+		var int dy = 0;
+		var int dist = 0;
+		
+		loop do
+			par/or do
+				every (_rand()%1000)ms do
+					// Fica vagando
+					hunterPO.angularVelocity = -0.005 + (0.001*(_rand()%10));	
+				end	
+			with
+				loop do
+					await 100ms;
+					dx = (hunterPO.position.x - boitata.boitataHead.character.position.x)/1000;
+					dy = (hunterPO.position.y - boitata.boitataHead.character.position.y)/1000;			
+					dist = _sqrt( _pow( dx , 2 ) + _pow( dy , 2 ) );
+					if dist < 100  then
+						// Foge do boitata
+						hunterPO.velocityDirection = _acos(1.0*dx/dist);
+						hunterPO.angularVelocity = 0;
+						break;
+					end
+				end
+			end
+		end
+	with
+		await decay;	
+		await 2s;
+	with
+		await destroy;			
+	end	
+end
+
+
+
+// Loop Principal do Jogo
+_srand(_time(null));
+
+par/or do
+    await SDL_QUIT;
+with
+    every SDL_REDRAW do
+        _SDL_SetRenderDrawColor(&&renderer!,0x00,0x00,0x00,0x00);
+        _SDL_RenderFillRect(&&renderer!, null);
+    end
+with
+	var PhysOrganism playerPO with
+		this.position = Vetor2D( WIN_W/2 , WIN_H/2 );
+		this.velocityDirection = 2.0 * PI * (_rand()%10000) / 10000;
+		this.velocityIntensity = SPEED;
+	end;
+	
+	var PlayerControls playerCON with
+		this.character = &playerPO;
+	end;
+	
+	var BoitataHead boitataHead with
+		this.ren = &renderer!;
+		this.character = &playerPO;
+	end;
+	
+	var Boitata boitata with
+		this.ren 			= &renderer!;	
+		this.boitataHead 	= &boitataHead;
+		this.headVelocity 	= &(playerPO.velocityIntensity);
+	end;
+	
+	
+	//Condicoes ciclicas
+	pool Hunter[] hunters;
+	var int scoreHunters = 0;
+	var int scoreValue = 0;
+	
+	par/or do
+		await boitata.destroy;
+		_printf("\nFIM DE JOGO!!!\n");
+		_printf("\nCacadores Devorados: \t%d",scoreHunters);
+		_printf("\nPontuacao Final: \t%d\n\n",scoreValue);
+	with
+		every (1000 + (_rand()%3000))ms do
+			spawn Hunter in hunters with
+				this.boitata = &boitata;
+				this.ren = &renderer!;
+				this.scoreHunters = &scoreHunters; 
+				this.scoreValue = &scoreValue; 
+			end;		
+		end	
+	end
+with
+	// Desenha a tela
+    every SDL_REDRAW do
+        _SDL_RenderPresent(&&renderer!);
+    end
+end
+
+escape 0;  
+    
+
+// e63b95a6905d278fb2ea187f8cad63ede552b4d6
