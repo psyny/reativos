@@ -10,5 +10,5 @@ Seta Baixo: Aumenta o raio da curva
 Objetivo: Devorar os Caçadores
 Os caçadores são verdes e podem tentar fugir do boitata.
 Eles ficam mais escuros e lentos com o passar do tempo.
-Quanto mais verdes, mais pontos eles valem.
+Quanto mais verdes e mais rapido, mais pontos eles valem.
 Devorar um caçador quando ele fica totalmente preto e com olhos brancos resulta em perda de pontos.

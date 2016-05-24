@@ -1,6 +1,8 @@
 #include "sdl.ceu"
 
 #define SPEED 200
+#define CORCAVEIRA RGBA( 0xAA , 0xAA , 0xAA , 0 )
+#define CORCAVEIRA2 RGBA( 0xCC , 0xCC , 0xCC , 0 )
 
 #define WIN_W 500000
 #define WIN_H 500000
@@ -9,6 +11,13 @@
 native @nohold _printf;
 
 
+/* Estrutura em C para gereciar o caminho feito pelo corpo da cobra.
+Consiste em uma lista encadeada, que cada NO armazena:
+Sua posição X Y
+Distancia até o penultimo NO ( VICE )
+Endereco do proximo NO
+Funções são utilizadas para "percorrer" uma distancia na lista
+*/
 native do
 	typedef struct pathNode { 
 		int x;
@@ -197,7 +206,7 @@ native do
 		tempNode = (PathNode*)(*node);
 		if( !( tempNode->next ) ) return;
 		
-		move = 2.0 * move / 1000;	
+		move = 2.5 * move / 1000;	
 		dx = (tempNode->next->x) - (*x);
 		dy = (tempNode->next->y) - (*y);	
 		dist = sqrt( pow(dx , 2) + pow(dy , 2) );
@@ -223,12 +232,12 @@ native do
 					distToFinish = distToFinish - dist;
 					move = move - dist;	
 					tempNode = tempNode->next;	
-					dx = (tempNode->next->x) - (tempNode->x);
-					dy = (tempNode->next->y) - (tempNode->y);
-					dist = sqrt( pow(dx , 2) + pow(dy , 2) );
+					dist = tempNode->d - tempNode->next->d;
 				} else {
 					(*node) = tempNode;
-					PTH_moveInNode( tempNode , move , x , y );
+					(*x) = tempNode->x;
+					(*y) = tempNode->y;
+					PTH_moveInNode( tempNode , ( tempNode->d - 1 ) , x , y );
 					return;				
 				}	
 			}					
@@ -259,6 +268,22 @@ var _SDL_Renderer&? renderer;
     with
         _SDL_DestroyRenderer(&&renderer!);
     end
+    
+// TEXTO ( WIP )
+/*
+_SDL_ShowCursor( _SDL_DISABLE );
+
+_TTF_Init();
+
+var _TTF_Font&? fnt;
+	finalize
+		fnt = &_TTF_OpenFont("font.ttf",12);
+	with
+		//_TTF_CloseFont(&&fnt!); // NAO CONSIGO FECHAR
+	end   
+	
+var _SDL_Color fntColor = _SDL_Color( 0 , 0xff , 0 , 0 );
+*/	 
 
 /* --------------------------------------------------------------------------
 	Geometria
@@ -362,90 +387,124 @@ end
 
 
 
+// Controla fluxo do jogo ( aperte qualquer tecla para continuar )
+class AnyKeyContinue with
+	event void pressed;
+do
+	par/or do	  
+			var _SDL_KeyboardEvent&& key;      
+    		key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_LEFT;
+		with
+			var _SDL_KeyboardEvent&& key;
+			key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_RIGHT;
+		with
+			var _SDL_KeyboardEvent&& key;
+			key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_DOWN;
+		with
+			var _SDL_KeyboardEvent&& key;
+			key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_UP;									
+	end
+	
+	emit this.pressed;
+end
+
+
 // Controle do jogador
 class PlayerControls with
 	var PhysOrganism& character;
 	
+	event void enableControl; // Da controle ao jogador
+	event void disableControl; // Retira controle do jogador
+	
+	var int d = 0;
 do
 	var float defaultTurn = 0.005;
 	var float multi = 1.0;
 	var int turnDirection = 0;
 	var int pilhaA = 0;
 	var int pilhaB = 0;
-    par do
-    	// Controle Direcional da Curva: reação quando solta as teclas ESQ ou DIR
-    	loop do
-            par/or do
-            	var _SDL_KeyboardEvent&& key;
-            	key = await SDL_KEYUP   until key:keysym.sym==_SDLK_LEFT;
-            with
-            	var _SDL_KeyboardEvent&& key;
-            	key = await SDL_KEYUP   until key:keysym.sym==_SDLK_RIGHT;
-            end  
-            pilhaA = pilhaA - 1;
-            if( pilhaA <= 0 ) then
-            	pilhaA = 0;
-		        turnDirection = 0;
-		        character.angularVelocity = 0;
-            end 		
-    	end
-    with
-    	// Controle Direcional da Curva: reação quando aperta ESQ
-        loop do
-            var _SDL_KeyboardEvent&& key;
-            key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_LEFT;
-            turnDirection = -1;
-            character.angularVelocity = defaultTurn * turnDirection * multi;
-            pilhaA = pilhaA + 1;
-            key = await SDL_KEYUP   until key:keysym.sym==_SDLK_LEFT;
-        end
-    with
-    	// Controle Direcional da Curva: reação quando aperta DIR
-        loop do
-            var _SDL_KeyboardEvent&& key;
-            key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_RIGHT;
-            turnDirection = 1;
-            character.angularVelocity = defaultTurn * turnDirection * multi;
-            pilhaA = pilhaA + 1;
-            key = await SDL_KEYUP   until key:keysym.sym==_SDLK_RIGHT;
-        end
-    with
-    	// Controle Raio da Curva: reação quando solta as teclas CIMA ou BAIXO
-    	loop do
-            par/or do
-            	var _SDL_KeyboardEvent&& key;
-            	key = await SDL_KEYUP   until key:keysym.sym==_SDLK_UP;
-            with
-            	var _SDL_KeyboardEvent&& key;
-            	key = await SDL_KEYUP   until key:keysym.sym==_SDLK_DOWN;
-            end  
-            pilhaB = pilhaB - 1;
-            if( pilhaB <= 0 ) then
-            	pilhaB = 0;
-		        multi = 1.0;
-		        character.angularVelocity = defaultTurn * turnDirection;
-            end 		
-    	end
-    with
-    	// Controle Raio da Curva: reação quando aperta CIMA: Diminui raio da Curva
-        loop do
-            var _SDL_KeyboardEvent&& key;
-            key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_UP;
-            multi = 2.0;
-            character.angularVelocity = character.angularVelocity * multi;
-            key = await SDL_KEYUP   until key:keysym.sym==_SDLK_UP;
-        end     
-    with
-    	// Controle Raio da Curva: reação quando aperta BAIXO: Aumenta raio da Curva
-        loop do
-            var _SDL_KeyboardEvent&& key;
-            key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_DOWN;
-            //_PTH_printChain(); //DEBUG
-            multi = 0.5;
-            character.angularVelocity = character.angularVelocity * multi;
-            key = await SDL_KEYUP   until key:keysym.sym==_SDLK_DOWN;
-        end             
-    end
+	
+	// Loop funcional
+	loop do
+		await this.enableControl;
+		
+		par do
+			// Controle Direcional da Curva: reação quando solta as teclas ESQ ou DIR
+			loop do
+		        par/or do
+		        	var _SDL_KeyboardEvent&& key;
+		        	key = await SDL_KEYUP   until key:keysym.sym==_SDLK_LEFT;
+		        with
+		        	var _SDL_KeyboardEvent&& key;
+		        	key = await SDL_KEYUP   until key:keysym.sym==_SDLK_RIGHT;
+		        end  
+		        pilhaA = pilhaA - 1;
+		        if( pilhaA <= 0 ) then
+		        	pilhaA = 0;
+				    turnDirection = 0;
+				    character.angularVelocity = 0;
+		        end 		
+			end
+		with
+			// Controle Direcional da Curva: reação quando aperta ESQ
+		    loop do
+		        var _SDL_KeyboardEvent&& key;
+		        key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_LEFT;
+		        turnDirection = -1;
+		        character.angularVelocity = defaultTurn * turnDirection * multi;
+		        pilhaA = pilhaA + 1;
+		        key = await SDL_KEYUP   until key:keysym.sym==_SDLK_LEFT;
+		    end
+		with
+			// Controle Direcional da Curva: reação quando aperta DIR
+		    loop do
+		        var _SDL_KeyboardEvent&& key;
+		        key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_RIGHT;
+		        turnDirection = 1;
+		        character.angularVelocity = defaultTurn * turnDirection * multi;
+		        pilhaA = pilhaA + 1;
+		        key = await SDL_KEYUP   until key:keysym.sym==_SDLK_RIGHT;
+		    end
+		with
+			// Controle Raio da Curva: reação quando solta as teclas CIMA ou BAIXO
+			loop do
+		        par/or do
+		        	var _SDL_KeyboardEvent&& key;
+		        	key = await SDL_KEYUP   until key:keysym.sym==_SDLK_UP;
+		        with
+		        	var _SDL_KeyboardEvent&& key;
+		        	key = await SDL_KEYUP   until key:keysym.sym==_SDLK_DOWN;
+		        end  
+		        pilhaB = pilhaB - 1;
+		        if( pilhaB <= 0 ) then
+		        	pilhaB = 0;
+				    multi = 1.0;
+				    character.angularVelocity = defaultTurn * turnDirection;
+		        end 		
+			end
+		with
+			// Controle Raio da Curva: reação quando aperta CIMA: Diminui raio da Curva
+		    loop do
+		        var _SDL_KeyboardEvent&& key;
+		        key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_UP;
+		        multi = 2.0;
+		        character.angularVelocity = character.angularVelocity * multi;
+		        key = await SDL_KEYUP   until key:keysym.sym==_SDLK_UP;
+		    end     
+		with
+			// Controle Raio da Curva: reação quando aperta BAIXO: Aumenta raio da Curva
+		    loop do
+		        var _SDL_KeyboardEvent&& key;
+		        key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_DOWN;
+		        //_PTH_printChain(); //DEBUG
+		        multi = 0.5;
+		        character.angularVelocity = character.angularVelocity * multi;
+		        key = await SDL_KEYUP   until key:keysym.sym==_SDLK_DOWN;
+		    end 
+		with
+			await this.disableControl;              
+		end		
+	end
 end
   
   
@@ -456,6 +515,8 @@ class BoitataHead with
 	var PhysOrganism& 	character;	 
 	
 	function (void)=>GEO_Circloid& getCircloid;
+	
+	event void dieFX;
 do
 	// Cabeça
 	var GEO_Circloid head with
@@ -471,8 +532,6 @@ do
 	
 	// Posicao inicial ao caminho
 	var Vetor2D position = character.getPosition();
-	_PTH_init( position.x , position.y );
-	_PTH_addViceNode();
 
 	// Olhos
 	var GEO_Circloid[2] olhos with 
@@ -501,9 +560,15 @@ do
 			_PTH_updateFinish( position.x , position.y );	
 		end
 	with
-		every 30ms do
+		every 100ms do
 			_PTH_addViceNode();
 		end
+	with 
+		await dieFX;
+		head.color = CORCAVEIRA2;
+		olhos[0].color = RGBA( 0x00 , 0x00 , 0x00 , 0x00 );	
+		olhos[1].color = RGBA( 0x00 , 0x00 , 0x00 , 0x00 );
+		await FOREVER;	
 	end	
 end
 
@@ -547,7 +612,8 @@ end
 // Boitata integra cabeça e corpo
 class Boitata with
 	var _SDL_Renderer& 	ren;
-	var BoitataHead& 	boitataHead;
+	var PhysOrganism& 	character;	
+	
 	var	int&			headVelocity;
 	var int				bodyVelocity	= 0;
 	var int				targetSize		= 0;
@@ -556,10 +622,12 @@ class Boitata with
 	event void destroy;  
 	
 	pool BoitataBody[] bodies;
+	
+	function (void)=>GEO_Circloid& getHeadCircloid;
 do
 	bodyVelocity = headVelocity;
 	
-	// Deletador de camiho: deleta nodes obsoletos do caminho
+	// Deletador de caminho: deleta nodes obsoletos do caminho
 	var BoitataBody pathEraser with
 		this.ren 		= &ren;	
 		this.node 		= _PTH_getViceNode();
@@ -567,7 +635,7 @@ do
 		this.size		= 0;				
 		this.minDist	= 100;
 	end;
-		
+	
 	// Cauda do boitata	
 	var int i = 0;
 	var BoitataBody[4] cauda with 
@@ -577,12 +645,27 @@ do
 		this.speed 		= &bodyVelocity;	
 		this.size		= 5 + ( i * 1 );				
 		this.minDist	= 2 + ( (4-i) * 8 ) + (2*i);
+	end;
+	
+	// Cabeça do boitata
+	var BoitataHead boitataHead with
+		this.ren 		= &ren;
+		this.character 	= &character;
+	end;		
+	
+	// Retorna geometria cabeça do boitata
+	function (void)=>GEO_Circloid& getHeadCircloid do
+		return &(boitataHead.getCircloid()); 
 	end;	
 	
-	par/or do
+	// Loop funcional
+	loop do
 		every dt in SDL_DT do	
 			// Deleta nodes obsoletos: depois do final da cauda
 			_PTH_deleteUpTo( (pathEraser.node) );
+			
+			// Ajusta velocidade do corpo a velocidade da cabeça
+			bodyVelocity = headVelocity;
 			
 			// Cresce boitata
 			if actualSize < targetSize then
@@ -614,7 +697,6 @@ do
 			loop bo in bodies do
 				if bo:minDist > 50
 				and _SDL_HasIntersection( &&(bo:getCircloid().colisionBox) , &&(headRect) ) then
-					//_printf("\nPERDEU, MENOR");
 					flagDestroy = 1;
 				end
 			end
@@ -630,13 +712,19 @@ do
 			
 			// Checa destruicao
 			if flagDestroy == 1 then
+				// Para a cabeça
+				boitataHead.character.velocityIntensity = 0;
+				// Efeitos visuais da morte
+				emit boitataHead.dieFX;
+				loop bo in bodies do
+					bo:getCircloid().color = CORCAVEIRA;
+				end		
+				loop i in 4 do
+					cauda[i].getCircloid().color = CORCAVEIRA;
+				end						
+				// Sinal de destruicao
 				emit this.destroy;
 			end			
-		end
-	with
-		await 5s;
-		every 500ms do
-			//targetSize = targetSize + 1; //DEBUG
 		end
 	end
 end
@@ -686,11 +774,19 @@ do
 		return &(this.hunter); 
 	end;
 
-	// Olhos
-	var GEO_Circloid[2] olhos with 
+	// Olhos - Sclera
+	var GEO_Circloid[2] olhosSclera with 
 		this.ren = &ren;
 		this.center = startPos;
-		this.radius = 4;
+		this.radius = 5;
+		this.color = RGBA( 0xFF , 0xFF , 0xFF , 0x00 );
+	end;	
+	
+	// Olhos - Iris
+	var GEO_Circloid[2] olhosIris with 
+		this.ren = &ren;
+		this.center = startPos;
+		this.radius = 3;
 		this.color = RGBA( 0x00 , 0xAA , 0xFF , 0x00 );
 	end;	
 	
@@ -708,11 +804,18 @@ do
 			hunter.center.y = position.y;
 		
 			// Posicao dos olhos
-			olhos[0].center.x = position.x + ( _cos( hunterPO.velocityDirection + PI/4 ) * ( hunter.radius / 2 ) );
-			olhos[0].center.y = position.y + ( _sin( hunterPO.velocityDirection + PI/4 ) * ( hunter.radius / 2 ) );
-			olhos[1].center.x = position.x + ( _cos( hunterPO.velocityDirection - PI/4 ) * ( hunter.radius / 2 ) );
-			olhos[1].center.y = position.y + ( _sin( hunterPO.velocityDirection - PI/4 ) * ( hunter.radius / 2 ) );	
-			
+			olhosSclera[0].center.x = position.x + ( _cos( hunterPO.velocityDirection + PI/4 ) * ( hunter.radius / 2 ) );
+			olhosSclera[0].center.y = position.y + ( _sin( hunterPO.velocityDirection + PI/4 ) * ( hunter.radius / 2 ) );
+			olhosSclera[1].center.x = position.x + ( _cos( hunterPO.velocityDirection - PI/4 ) * ( hunter.radius / 2 ) );
+			olhosSclera[1].center.y = position.y + ( _sin( hunterPO.velocityDirection - PI/4 ) * ( hunter.radius / 2 ) );	
+			// Iris
+			var int dx = _cos( hunterPO.velocityDirection ) * ( olhosSclera[0].radius - olhosIris[0].radius );
+			var int dy = _sin( hunterPO.velocityDirection ) * ( olhosSclera[0].radius - olhosIris[0].radius );
+			olhosIris[0].center.x = olhosSclera[0].center.x + dx; 
+			olhosIris[1].center.x = olhosSclera[1].center.x + dx;
+			olhosIris[0].center.y = olhosSclera[0].center.y + dy; 
+			olhosIris[1].center.y = olhosSclera[1].center.y + dy;
+						
 			// Posicao do sensor
 			sensorBox.x = position.x - (sensorBox.w/2) + ( _cos( hunterPO.velocityDirection ) * ( hunter.radius * 1.5 ) );
 			sensorBox.y = position.y - (sensorBox.h/2) + ( _sin( hunterPO.velocityDirection ) * ( hunter.radius * 1.5 ) );
@@ -722,23 +825,23 @@ do
 				hunterPO.velocityDirection = -(PI/2.0) + (0.1*PI) + (PI*0.01*(_rand()%80));
 			else/if sensorBox.y < 0 then
 				hunterPO.velocityDirection = (0.1*PI) + (PI*0.01*(_rand()%80));
-			else/if (sensorBox.x - (sensorBox.w/2) ) > (WIN_W/1000) then
+			else/if (sensorBox.x + sensorBox.w ) > (WIN_W/1000) then
 				hunterPO.velocityDirection = (PI/2.0) + (0.1*PI) + (PI*0.01*(_rand()%80));
-			else/if (sensorBox.y - (sensorBox.h/2) ) > (WIN_H/1000) then
+			else/if (sensorBox.y + sensorBox.h ) > (WIN_H/1000) then
 				hunterPO.velocityDirection = PI - (0.1*PI) + (PI*0.01*(_rand()%80));				
 			end
 			
 			// Colisão com o corpo do boitata			
 			loop bo in boitata.bodies do
-				//bodyRect = bo:getCircloid().colisionBox;
 				if bo:minDist > 30
 				and _SDL_HasIntersection( &&(bo:getCircloid().colisionBox) , &&(sensorBox) ) then
 					hunterPO.velocityDirection = hunterPO.velocityDirection + PI;
 				end
 			end				
 			
-			// Colisão com a cabeça do boitata		
-			if 	_SDL_HasIntersection( &&(hunter.colisionBox) , &&(boitata.boitataHead.getCircloid().colisionBox) ) then
+			// Colisão com a cabeça do boitata
+					
+			if 	_SDL_HasIntersection( &&(hunter.colisionBox) , &&(boitata.getHeadCircloid().colisionBox) ) then
 				scoreHunters = scoreHunters + 1;				
 				if value > 0 then
 					scoreValue = 50 + scoreValue + value;
@@ -747,7 +850,8 @@ do
 					scoreValue = scoreValue + value;
 				end
 				emit this.destroy;
-			end		
+			end	
+				
 		end
 	with
 		// Diminui pontuacao
@@ -760,8 +864,8 @@ do
 				value = -100;
 				hunter.color.g = 0;
 				hunterPO.velocityIntensity = 0;
-				olhos[0].color = RGBA( 0xFF , 0xFF , 0xFF , 0 );
-				olhos[1].color = RGBA( 0xFF , 0xFF , 0xFF , 0 );
+				olhosIris[0].color = RGBA( 0xFF , 0xFF , 0xFF , 0 );
+				olhosIris[1].color = RGBA( 0xFF , 0xFF , 0xFF , 0 );
 				emit this.decay;
 			end
 			
@@ -781,8 +885,8 @@ do
 			with
 				loop do
 					await 100ms;
-					dx = (hunterPO.position.x - boitata.boitataHead.character.position.x)/1000;
-					dy = (hunterPO.position.y - boitata.boitataHead.character.position.y)/1000;			
+					dx = (hunterPO.position.x - boitata.character.position.x)/1000;
+					dy = (hunterPO.position.y - boitata.character.position.y)/1000;			
 					dist = _sqrt( _pow( dx , 2 ) + _pow( dy , 2 ) );
 					if dist < 100  then
 						// Foge do boitata
@@ -814,38 +918,51 @@ with
         _SDL_RenderFillRect(&&renderer!, null);
     end
 with
+	// Organismo da fisica do jogador
 	var PhysOrganism playerPO with
 		this.position = Vetor2D( WIN_W/2 , WIN_H/2 );
 		this.velocityDirection = 2.0 * PI * (_rand()%10000) / 10000;
 		this.velocityIntensity = SPEED;
 	end;
 	
+	// Inicializa estrutura do caminho
+	_PTH_init( playerPO.position.x/1000 , playerPO.position.y/1000 );
+		finalize with
+		_PTH_destroi();
+		end;			
+	_PTH_addViceNode();		
+	
+	// Organismo dos controles do jogador
 	var PlayerControls playerCON with
 		this.character = &playerPO;
 	end;
 	
-	var BoitataHead boitataHead with
-		this.ren = &renderer!;
-		this.character = &playerPO;
-	end;
-	
+	// Personagem
 	var Boitata boitata with
 		this.ren 			= &renderer!;	
-		this.boitataHead 	= &boitataHead;
+		this.character = &playerPO;
 		this.headVelocity 	= &(playerPO.velocityIntensity);
 	end;
+
+	// Aguarda uma tecla direcional para começar o jogo
+	playerPO.angularVelocity = 0.002;
+	playerPO.velocityIntensity = SPEED/2;
+	var AnyKeyContinue contKey;
+	await contKey.pressed;
+	playerPO.velocityIntensity = SPEED;
+	playerPO.angularVelocity = 0;
+	await 1ms; // BUG: Tem q ter esse await para o emit seguinte funcionar
+	emit playerCON.enableControl;
+
 	
-	
-	//Condicoes ciclicas
+	//Ciclo de jogo
 	pool Hunter[] hunters;
 	var int scoreHunters = 0;
 	var int scoreValue = 0;
 	
 	par/or do
+		// Para o ciclo caso o boitata seja destruido ( colida )
 		await boitata.destroy;
-		_printf("\nFIM DE JOGO!!!\n");
-		_printf("\nCacadores Devorados: \t%d",scoreHunters);
-		_printf("\nPontuacao Final: \t%d\n\n",scoreValue);
 	with
 		every (1000 + (_rand()%3000))ms do
 			spawn Hunter in hunters with
@@ -856,6 +973,20 @@ with
 			end;		
 		end	
 	end
+	
+	// Tira jogador do comando
+	emit playerCON.disableControl;
+		
+	// Exibe pontuação final
+	_printf("\nFIM DE JOGO!!!\n");
+	_printf("\nCacadores Devorados: \t%d",scoreHunters);
+	_printf("\nPontuacao Final: \t%d\n\n",scoreValue);
+		
+	// Aguarda um botão direcional para fechar o programa
+	await 500ms;
+	var AnyKeyContinue contKey;
+	await contKey.pressed;
+		
 with
 	// Desenha a tela
     every SDL_REDRAW do
