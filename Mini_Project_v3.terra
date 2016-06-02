@@ -111,13 +111,12 @@ d16[3] = Pai do no de origem
 d32[1] = iteracao ( rodadas de leitura )
 */
 
-// Espera inicial
-if nodeId != 11 then
-	await ( sendOffset * sendDelay )ms; // Offset para reduzir colisões
-end
-
 // Loop funcional
 par do
+	// Offset inicial para reduzir colisões
+	if nodeId != 11 then
+		await ( sendOffset * sendDelay )ms;
+	end
 	// Fazendo leitura de temperatura
 	loop do
 		par/and do
