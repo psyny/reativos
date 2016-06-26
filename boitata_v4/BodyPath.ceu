@@ -1,0 +1,251 @@
+native do
+
+	typedef struct pathNode { 
+		int x;
+		int y;
+		int d; // Para os não vice é a distancia até o vice. Para o vice é a distancia até o finish.
+		struct pathNode* next;
+	} PathNode;
+
+	typedef struct path { 
+		PathNode* start;
+		PathNode* vice;
+		PathNode* finish;
+	} Path;
+
+	static int debugNodes = 0;
+	static Path* playerPath[4];
+
+	// Prepara estrutura para ser utilizada 
+	void BPT_init( int player , int x , int y ) {
+		PathNode* newNode;
+		Path* newPath;
+		int dist, dx, dy;
+	
+		newPath = (Path*) malloc(sizeof(Path));
+		newPath->start = 0;
+		newPath->vice = 0;
+		newPath->finish = 0;
+	
+		newNode = (PathNode*) malloc(sizeof(PathNode));		
+		newNode->x = x;
+		newNode->y = y;
+		newNode->d = 0;
+		newNode->next = 0;
+	
+		newPath->finish = newNode;
+	
+		newNode = (PathNode*) malloc(sizeof(PathNode));
+		newNode->x = x;
+		newNode->y = y;
+		newNode->d = 0;
+		newNode->next = newPath->finish;
+	
+		newPath->start = newNode;
+		newPath->vice = newNode;	
+	
+		playerPath[player-0] = newPath;
+	}	
+
+	// Destroi estrutura
+	void BPT_destroi( int player ) {
+		PathNode *tNode , *freeNode;
+	
+		Path* path = playerPath[player-0];
+	
+		if( !path->finish ) {
+			free(path);
+			return;
+		}
+		else if( path->finish && !path->start ) {
+			free(path->finish);
+			free(path);
+			return;			
+		} else {
+			tNode = path->start;
+			while( tNode ) {
+				freeNode = tNode;
+				tNode = tNode->next;
+				free(freeNode);
+			}
+			free(path);
+			return;
+		}
+	}	
+
+	// Remove todos os nodes antes do node do parametro node
+	void BPT_deleteUpTo( int player , int node ) {	
+		PathNode *freeNode , *sNode , *tNode;
+	
+		Path* path = playerPath[player-0];
+	
+		sNode = (PathNode*)(node);		
+		tNode = path->start;
+	
+		while( tNode != sNode ) {
+			freeNode = tNode;
+			tNode = tNode->next;
+			free(freeNode);
+		}
+	
+		path->start = sNode;
+	}	
+
+	// Atualiza o node no final e o vice(reflexo da alteracao do finish)
+	void BPT_updateFinish( int player , int x , int y ) {
+		int dist, dx, dy;
+	
+		Path* path = playerPath[player-0];
+	
+		path->finish->x = x;
+		path->finish->y = y;
+
+		dx = x - (path->vice->x);
+		dy = y - (path->vice->y);	
+		dist = sqrt( pow(dx , 2) + pow(dy , 2) );	
+		path->vice->d = dist;		
+	}
+	
+	// Retorna o nó final
+	int BPT_getFinishNode( int player ) {
+		Path* path = playerPath[player-0];
+		return ((int)path->finish);
+	}
+
+	// Retorna o nó vice
+	int BPT_getViceNode( int player ) {
+		Path* path = playerPath[player-0];
+		return ((int)path->vice);
+	}	
+
+	// Retorna em *x e *y os valores de x e y de *node
+	void BPT_getNodePos( int* node , int *x , int *y ) {
+		PathNode* tNode;
+		tNode = (PathNode*)(*node);
+		(*x) = tNode->x;
+		(*y) = tNode->y;
+	}
+
+	// Debug, imprime cadeia de nos
+	void BPT_printChain( int player ) {
+		PathNode* pn;
+		int i = 0;	
+	
+		Path* path = playerPath[player-0];	
+	
+		pn = path->start;
+		printf("\nStart: %u \tFinish: %u\n", path->start , path->finish );
+	
+		while( pn ) {
+			printf("%u(%d,%d)| ", pn , pn->x , pn->y );
+			pn = pn->next;
+			i++;
+		}
+		printf("\nTota Nodes: %d \n",i);
+	}
+
+	// Adiciona um nó vice que é uma copia do finish	
+	void BPT_addViceNode( int player ) {
+		PathNode* newNode;
+		int dist, dx, dy;
+	
+		Path* path = playerPath[player-0];
+	
+		newNode = (PathNode*) malloc(sizeof(PathNode));
+	
+		newNode->x = path->finish->x;
+		newNode->y = path->finish->y;
+		newNode->d = 0;
+		newNode->next = path->finish;
+	
+		//Atualiza lista
+		if( path->start == 0 ) path->start = newNode;
+		if( path->vice ) {
+			path->vice->next = newNode;
+			// Pega a distancia do ultimo ponto para o novo
+			dx = (newNode->x) - (path->vice->x);
+			dy = (newNode->y) - (path->vice->y);	
+			dist = sqrt( pow(dx , 2) + pow(dy , 2) );			
+		}
+		path->vice = newNode;
+
+		//Atualiza todos os pontos anteriores
+		newNode = path->start;
+		while( newNode != path->vice ) {
+			newNode->d = newNode->d + dist;
+			newNode = newNode->next;
+		}
+				
+		//debugNodes++;
+		//printf("\nNodes qtd: %d\n",debugNodes);		
+	}
+
+	// Muda *x e *y para as novas coordenas partindo de um no "move" dentro deste no
+	// NAO CHECA SE A DISTANCIA ULTRAPASSARA A POSICAO DO PROXIMO NODE
+	void BPT_moveInNode( PathNode* node , int move , int* x , int* y ) {
+		int dist , dx , dy;
+		float proportion;
+
+		dx = (node->next->x) - (*x);
+		dy = (node->next->y) - (*y);	
+		dist = sqrt( pow(dx , 2) + pow(dy , 2) );
+			
+		proportion = 1.0 * move / dist;
+		
+		(*x) = (*x) + ( dx * proportion );
+		(*y) = (*y) + ( dy * proportion );	
+			
+		return;
+	}	
+
+	// Muda *x e *y para as novas coordenas partindo de um no e andando "move" no caminho
+	// Mantem uma distancia minDist da chegada.
+	void BPT_moveInPath( int player , int* node , int move , int* x , int* y , int minDistToFinish ) {
+		int dist , dx , dy;
+		int distToFinish;
+		PathNode* tempNode;	
+	
+		Path* path = playerPath[player-0];
+	
+		tempNode = (PathNode*)(*node);
+		if( !( tempNode->next ) ) return;
+	
+		move = 2.5 * move / 1000;	
+		dx = (tempNode->next->x) - (*x);
+		dy = (tempNode->next->y) - (*y);	
+		dist = sqrt( pow(dx , 2) + pow(dy , 2) );
+		distToFinish = dist + tempNode->next->d + path->vice->d;		
+		if( distToFinish < minDistToFinish ) return;
+		
+		while(1) {			
+			//Atualiza move baseado na distancia maxima q pode-se percorrer
+			if( ( distToFinish - move ) < minDistToFinish ) {
+					move = distToFinish - minDistToFinish;
+					if( move < 0 ) move = 0;			
+			}
+		
+			//Se o move for menor que a distancia para o proximo no, nao muda o no
+			if( move < dist ) {
+				(*node) = tempNode;
+				BPT_moveInNode( tempNode , move , x , y );
+				return;
+			}
+			//Move é maior do q a distancia para o proximo no, muda para o proximo no
+			else {
+				if( tempNode->next->d > 0 ) {
+					distToFinish = distToFinish - dist;
+					move = move - dist;	
+					tempNode = tempNode->next;	
+					dist = tempNode->d - tempNode->next->d;
+				} else {
+					(*node) = tempNode;
+					(*x) = tempNode->x;
+					(*y) = tempNode->y;
+					BPT_moveInNode( tempNode , ( tempNode->d - 1 ) , x , y );
+					return;				
+				}	
+			}					
+		}
+	}
+end
+

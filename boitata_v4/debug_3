@@ -1,0 +1,17 @@
+#!/bin/bash
+
+prog="/boitata_debug_3.ceu"
+
+dir=$(pwd)
+
+clear
+
+echo "##############################################"
+echo "Compilando todo os arquivos e executando o jogo"
+date
+echo "##############################################"
+
+cd
+cd ceu-sdl
+make ceu SRC=$dir$prog all
+

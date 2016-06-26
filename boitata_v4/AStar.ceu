@@ -1,0 +1,1055 @@
+native do
+	
+// Prototypes
+
+
+
+typedef struct __ASNeighborList *ASNeighborList;
+typedef struct __ASPath *ASPath;
+
+typedef struct {
+    size_t  nodeSize;                                                                               // the size of the structure being used for the nodes - important since nodes are copied into the resulting path
+    void    (*nodeNeighbors)(ASNeighborList neighbors, void *node, void *context);                  // add nodes to the neighbor list if they are connected to this node
+    float   (*pathCostHeuristic)(void *fromNode, void *toNode, void *context);                      // estimated cost to transition from the first node to the second node -- optional, uses 0 if not specified
+    int     (*earlyExit)(size_t visitedCount, void *visitingNode, void *goalNode, void *context);   // early termination, return 1 for success, -1 for failure, 0 to continue searching -- optional
+    int     (*nodeComparator)(void *node1, void *node2, void *context);                             // must return a sort order for the nodes (-1, 0, 1) -- optional, uses memcmp if not specified
+} ASPathNodeSource;
+
+// use in the nodeNeighbors callback to return neighbors
+void ASNeighborListAdd(ASNeighborList neighbors, void *node, float edgeCost);
+
+// as a path is created, the relevant nodes are copied into the path
+ASPath ASPathCreate(const ASPathNodeSource *nodeSource, void *context, void *startNode, void *goalNode);
+
+// paths created with ASPathCreate() must be destroyed or else it will leak memory
+void ASPathDestroy(ASPath path);
+
+// if you want to make a copy of a path result, this function will do the job
+// you must call ASPathDestroy() with the resulting path to clean it up or it will cause a leak
+ASPath ASPathCopy(ASPath path);
+
+// fetches the total cost of the path
+float ASPathGetCost(ASPath path);
+
+// fetches the number of nodes in the path
+size_t ASPathGetCount(ASPath path);
+
+// returns a pointer to the given node in the path
+void *ASPathGetNode(ASPath path, size_t index);
+
+
+
+
+// C code
+
+
+
+
+struct __ASNeighborList {
+    const ASPathNodeSource *source;
+    size_t capacity;
+    size_t count;
+    float *costs;
+    void *nodeKeys;
+};
+
+struct __ASPath {
+    size_t nodeSize;
+    size_t count;
+    float cost;
+    int8_t nodeKeys[];
+};
+
+typedef struct {
+    unsigned isClosed:1;
+    unsigned isOpen:1;
+    unsigned isGoal:1;
+    unsigned hasParent:1;
+    unsigned hasEstimatedCost:1;
+    float estimatedCost;
+    float cost;
+    size_t openIndex;
+    size_t parentIndex;
+    int8_t nodeKey[];
+} NodeRecord;
+
+struct __VisitedNodes {
+    const ASPathNodeSource *source;
+    void *context;
+    size_t nodeRecordsCapacity;
+    size_t nodeRecordsCount;
+    void *nodeRecords;
+    size_t *nodeRecordsIndex;           // array of nodeRecords indexes, kept sorted by nodeRecords[i]->nodeKey using source->nodeComparator
+    size_t openNodesCapacity;
+    size_t openNodesCount;
+    size_t *openNodes;                  // binary heap of nodeRecords indexes, sorted by the nodeRecords[i]->rank
+};
+typedef struct __VisitedNodes *VisitedNodes;
+
+typedef struct {
+    VisitedNodes nodes;
+    size_t index;
+} Node;
+
+static const Node NodeNull = {NULL, -1};
+
+/********************************************/
+
+static inline VisitedNodes VisitedNodesCreate(const ASPathNodeSource *source, void *context)
+{
+    VisitedNodes nodes = calloc(1, sizeof(struct __VisitedNodes));
+    nodes->source = source;
+    nodes->context = context;
+    return nodes;
+}
+
+static inline void VisitedNodesDestroy(VisitedNodes visitedNodes)
+{
+    free(visitedNodes->nodeRecordsIndex);
+    free(visitedNodes->nodeRecords);
+    free(visitedNodes->openNodes);
+    free(visitedNodes);
+}
+
+static inline int NodeIsNull(Node n)
+{
+    return (n.nodes == NodeNull.nodes) && (n.index == NodeNull.index);
+}
+
+static inline Node NodeMake(VisitedNodes nodes, size_t index)
+{
+    return (Node){nodes, index};
+}
+
+static inline NodeRecord *NodeGetRecord(Node node)
+{
+    return node.nodes->nodeRecords + (node.index * (node.nodes->source->nodeSize + sizeof(NodeRecord)));
+}
+
+static inline void *GetNodeKey(Node node)
+{
+    return NodeGetRecord(node)->nodeKey;
+}
+
+static inline int NodeIsInOpenSet(Node n)
+{
+    return NodeGetRecord(n)->isOpen;
+}
+
+static inline int NodeIsInClosedSet(Node n)
+{
+    return NodeGetRecord(n)->isClosed;
+}
+
+static inline void RemoveNodeFromClosedSet(Node n)
+{
+    NodeGetRecord(n)->isClosed = 0;
+}
+
+static inline void AddNodeToClosedSet(Node n)
+{
+    NodeGetRecord(n)->isClosed = 1;
+}
+
+static inline float GetNodeRank(Node n)
+{
+    NodeRecord *record = NodeGetRecord(n);
+    return record->estimatedCost + record->cost;
+}
+
+static inline float GetNodeCost(Node n)
+{
+    return NodeGetRecord(n)->cost;
+}
+
+static inline float GetNodeEstimatedCost(Node n)
+{
+    return NodeGetRecord(n)->estimatedCost;
+}
+
+static inline void SetNodeEstimatedCost(Node n, float estimatedCost)
+{
+    NodeRecord *record = NodeGetRecord(n);
+    record->estimatedCost = estimatedCost;
+    record->hasEstimatedCost = 1;
+}
+
+static inline int NodeHasEstimatedCost(Node n)
+{
+    return NodeGetRecord(n)->hasEstimatedCost;
+}
+
+static inline void SetNodeIsGoal(Node n)
+{
+    if (!NodeIsNull(n)) {
+        NodeGetRecord(n)->isGoal = 1;
+    }
+}
+
+static inline int NodeIsGoal(Node n)
+{
+    return !NodeIsNull(n) && NodeGetRecord(n)->isGoal;
+}
+
+static inline Node GetParentNode(Node n)
+{
+    NodeRecord *record = NodeGetRecord(n);
+    if (record->hasParent) {
+        return NodeMake(n.nodes, record->parentIndex);
+    } else {
+        return NodeNull;
+    }
+}
+
+static inline int NodeRankCompare(Node n1, Node n2)
+{
+    const float rank1 = GetNodeRank(n1);
+    const float rank2 = GetNodeRank(n2);
+    if (rank1 < rank2) {
+        return -1;
+    } else if (rank1 > rank2) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+static inline float GetPathCostHeuristic(Node a, Node b)
+{
+    if (a.nodes->source->pathCostHeuristic && !NodeIsNull(a) && !NodeIsNull(b)) {
+        return a.nodes->source->pathCostHeuristic(GetNodeKey(a), GetNodeKey(b), a.nodes->context);
+    } else {
+        return 0;
+    }
+}
+
+static inline int NodeKeyCompare(Node node, void *nodeKey)
+{
+    if (node.nodes->source->nodeComparator) {
+        return node.nodes->source->nodeComparator(GetNodeKey(node), nodeKey, node.nodes->context);
+    } else {
+        return memcmp(GetNodeKey(node), nodeKey, node.nodes->source->nodeSize);
+    }
+}
+
+static inline Node GetNode(VisitedNodes nodes, void *nodeKey)
+{
+    if (!nodeKey) {
+        return NodeNull;
+    }
+    
+    // looks it up in the index, if it's not found it inserts a new record in the sorted index and the nodeRecords array and returns a reference to it
+    size_t first = 0;
+
+    if (nodes->nodeRecordsCount > 0) {
+        size_t last = nodes->nodeRecordsCount-1;
+
+        while (first <= last) {
+            const size_t mid = (first + last) / 2;
+            const int comp = NodeKeyCompare(NodeMake(nodes, nodes->nodeRecordsIndex[mid]), nodeKey);
+
+            if (comp < 0) {
+                first = mid + 1;
+            } else if (comp > 0 && mid > 0) {
+                last = mid - 1;
+            } else if (comp > 0) {
+                break;
+            } else {
+                return NodeMake(nodes, nodes->nodeRecordsIndex[mid]);
+            }
+        }
+    }
+    
+    if (nodes->nodeRecordsCount == nodes->nodeRecordsCapacity) {
+        nodes->nodeRecordsCapacity = 1 + (nodes->nodeRecordsCapacity * 2);
+        nodes->nodeRecords = realloc(nodes->nodeRecords, nodes->nodeRecordsCapacity * (sizeof(NodeRecord) + nodes->source->nodeSize));
+        nodes->nodeRecordsIndex = realloc(nodes->nodeRecordsIndex, nodes->nodeRecordsCapacity * sizeof(size_t));
+    }
+    
+    Node node = NodeMake(nodes, nodes->nodeRecordsCount);
+    nodes->nodeRecordsCount++;
+    
+    memmove(&nodes->nodeRecordsIndex[first+1], &nodes->nodeRecordsIndex[first], (nodes->nodeRecordsCapacity - first - 1) * sizeof(size_t));
+    nodes->nodeRecordsIndex[first] = node.index;
+    
+    NodeRecord *record = NodeGetRecord(node);
+    memset(record, 0, sizeof(NodeRecord));
+    memcpy(record->nodeKey, nodeKey, nodes->source->nodeSize);
+
+    return node;
+}
+
+static inline void SwapOpenSetNodesAtIndexes(VisitedNodes nodes, size_t index1, size_t index2)
+{
+    if (index1 != index2) {
+        NodeRecord *record1 = NodeGetRecord(NodeMake(nodes, nodes->openNodes[index1]));
+        NodeRecord *record2 = NodeGetRecord(NodeMake(nodes, nodes->openNodes[index2]));
+        
+        const size_t tempOpenIndex = record1->openIndex;
+        record1->openIndex = record2->openIndex;
+        record2->openIndex = tempOpenIndex;
+        
+        const size_t tempNodeIndex = nodes->openNodes[index1];
+        nodes->openNodes[index1] = nodes->openNodes[index2];
+        nodes->openNodes[index2] = tempNodeIndex;
+    }
+}
+
+static inline void DidRemoveFromOpenSetAtIndex(VisitedNodes nodes, size_t index)
+{
+    size_t smallestIndex = index;
+    
+    do {
+        if (smallestIndex != index) {
+            SwapOpenSetNodesAtIndexes(nodes, smallestIndex, index);
+            index = smallestIndex;
+        }
+
+        const size_t leftIndex = (2 * index) + 1;
+        const size_t rightIndex = (2 * index) + 2;
+        
+        if (leftIndex < nodes->openNodesCount && NodeRankCompare(NodeMake(nodes, nodes->openNodes[leftIndex]), NodeMake(nodes, nodes->openNodes[smallestIndex])) < 0) {
+            smallestIndex = leftIndex;
+        }
+        
+        if (rightIndex < nodes->openNodesCount && NodeRankCompare(NodeMake(nodes, nodes->openNodes[rightIndex]), NodeMake(nodes, nodes->openNodes[smallestIndex])) < 0) {
+            smallestIndex = rightIndex;
+        }
+    } while (smallestIndex != index);
+}
+
+static inline void RemoveNodeFromOpenSet(Node n)
+{
+    NodeRecord *record = NodeGetRecord(n);
+
+    if (record->isOpen) {
+        record->isOpen = 0;
+        n.nodes->openNodesCount--;
+        
+        const size_t index = record->openIndex;
+        SwapOpenSetNodesAtIndexes(n.nodes, index, n.nodes->openNodesCount);
+        DidRemoveFromOpenSetAtIndex(n.nodes, index);
+    }
+}
+
+static inline void DidInsertIntoOpenSetAtIndex(VisitedNodes nodes, size_t index)
+{
+    while (index > 0) {
+        const size_t parentIndex = floorf((index-1) / 2);
+        
+        if (NodeRankCompare(NodeMake(nodes, nodes->openNodes[parentIndex]), NodeMake(nodes, nodes->openNodes[index])) < 0) {
+            break;
+        } else {
+            SwapOpenSetNodesAtIndexes(nodes, parentIndex, index);
+            index = parentIndex;
+        }
+    }
+}
+
+static inline void AddNodeToOpenSet(Node n, float cost, Node parent)
+{
+    NodeRecord *record = NodeGetRecord(n);
+
+    if (!NodeIsNull(parent)) {
+        record->hasParent = 1;
+        record->parentIndex = parent.index;
+    } else {
+        record->hasParent = 0;
+    }
+
+    if (n.nodes->openNodesCount == n.nodes->openNodesCapacity) {
+        n.nodes->openNodesCapacity = 1 + (n.nodes->openNodesCapacity * 2);
+        n.nodes->openNodes = realloc(n.nodes->openNodes, n.nodes->openNodesCapacity * sizeof(size_t));
+    }
+
+    const size_t openIndex = n.nodes->openNodesCount;
+    n.nodes->openNodes[openIndex] = n.index;
+    n.nodes->openNodesCount++;
+
+    record->openIndex = openIndex;
+    record->isOpen = 1;
+    record->cost = cost;
+
+    DidInsertIntoOpenSetAtIndex(n.nodes, openIndex);
+}
+
+static inline int HasOpenNode(VisitedNodes nodes)
+{
+    return nodes->openNodesCount > 0;
+}
+
+static inline Node GetOpenNode(VisitedNodes nodes)
+{
+    return NodeMake(nodes, nodes->openNodes[0]);
+}
+
+static inline ASNeighborList NeighborListCreate(const ASPathNodeSource *source)
+{
+    ASNeighborList list = calloc(1, sizeof(struct __ASNeighborList));
+    list->source = source;
+    return list;
+}
+
+static inline void NeighborListDestroy(ASNeighborList list)
+{
+    free(list->costs);
+    free(list->nodeKeys);
+    free(list);
+}
+
+static inline float NeighborListGetEdgeCost(ASNeighborList list, size_t index)
+{
+    return list->costs[index];
+}
+
+static void *NeighborListGetNodeKey(ASNeighborList list, size_t index)
+{
+    return list->nodeKeys + (index * list->source->nodeSize);
+}
+
+/********************************************/
+
+void ASNeighborListAdd(ASNeighborList list, void *node, float edgeCost)
+{
+    if (list->count == list->capacity) {
+        list->capacity = 1 + (list->capacity * 2);
+        list->costs = realloc(list->costs, sizeof(float) * list->capacity);
+        list->nodeKeys = realloc(list->nodeKeys, list->source->nodeSize * list->capacity);
+    }
+    list->costs[list->count] = edgeCost;
+    memcpy(list->nodeKeys + (list->count * list->source->nodeSize), node, list->source->nodeSize);
+    list->count++;
+}
+
+ASPath ASPathCreate(const ASPathNodeSource *source, void *context, void *startNodeKey, void *goalNodeKey)
+{
+    if (!startNodeKey || !source || !source->nodeNeighbors || source->nodeSize == 0) {
+        return NULL;
+    }
+    
+    VisitedNodes visitedNodes = VisitedNodesCreate(source, context);
+    ASNeighborList neighborList = NeighborListCreate(source);
+    Node current = GetNode(visitedNodes, startNodeKey);
+    Node goalNode = GetNode(visitedNodes, goalNodeKey);
+    ASPath path = NULL;
+    
+    // mark the goal node as the goal
+    SetNodeIsGoal(goalNode);
+    
+    // set the starting node's estimate cost to the goal and add it to the open set
+    SetNodeEstimatedCost(current,  GetPathCostHeuristic(current, goalNode));
+    AddNodeToOpenSet(current, 0, NodeNull);
+    
+    // perform the A* algorithm
+    while (HasOpenNode(visitedNodes) && !NodeIsGoal((current = GetOpenNode(visitedNodes)))) {
+        if (source->earlyExit) {
+            const int shouldExit = source->earlyExit(visitedNodes->nodeRecordsCount, GetNodeKey(current), goalNodeKey, context);
+
+            if (shouldExit > 0) {
+                SetNodeIsGoal(current);
+                break;
+            } else if (shouldExit < 0) {
+                break;
+            }
+        }
+        
+        RemoveNodeFromOpenSet(current);
+        AddNodeToClosedSet(current);
+        
+        neighborList->count = 0;
+        source->nodeNeighbors(neighborList, GetNodeKey(current), context);
+
+        for (size_t n=0; n<neighborList->count; n++) {
+            const float cost = GetNodeCost(current) + NeighborListGetEdgeCost(neighborList, n);
+            Node neighbor = GetNode(visitedNodes, NeighborListGetNodeKey(neighborList, n));
+            
+            if (!NodeHasEstimatedCost(neighbor)) {
+                SetNodeEstimatedCost(neighbor, GetPathCostHeuristic(neighbor, goalNode));
+            }
+            
+            if (NodeIsInOpenSet(neighbor) && cost < GetNodeCost(neighbor)) {
+                RemoveNodeFromOpenSet(neighbor);
+            }
+            
+            if (NodeIsInClosedSet(neighbor) && cost < GetNodeCost(neighbor)) {
+                RemoveNodeFromClosedSet(neighbor);
+            }
+            
+            if (!NodeIsInOpenSet(neighbor) && !NodeIsInClosedSet(neighbor)) {
+                AddNodeToOpenSet(neighbor, cost, current);
+            }
+        }
+    }
+    
+    if (NodeIsNull(goalNode)) {
+        SetNodeIsGoal(current);
+    }
+    
+    if (NodeIsGoal(current)) {
+        size_t count = 0;
+        Node n = current;
+        
+        while (!NodeIsNull(n)) {
+            count++;
+            n = GetParentNode(n);
+        }
+        
+        path = malloc(sizeof(struct __ASPath) + (count * source->nodeSize));
+        path->nodeSize = source->nodeSize;
+        path->count = count;
+        path->cost = GetNodeCost(current);
+        
+        n = current;
+        for (size_t i=count; i>0; i--) {
+            memcpy(path->nodeKeys + ((i - 1) * source->nodeSize), GetNodeKey(n), source->nodeSize);
+            n = GetParentNode(n);
+        }
+    }
+    
+    NeighborListDestroy(neighborList);
+    VisitedNodesDestroy(visitedNodes);
+
+    return path;
+}
+
+void ASPathDestroy(ASPath path)
+{
+    free(path);
+}
+
+ASPath ASPathCopy(ASPath path)
+{
+    if (path) {
+        const size_t size = sizeof(struct __ASPath) + (path->count * path->nodeSize);
+        ASPath newPath = malloc(size);
+        memcpy(newPath, path, size);
+        return newPath;
+    } else {
+        return NULL;
+    }
+}
+
+float ASPathGetCost(ASPath path)
+{
+    return path? path->cost : INFINITY;
+}
+
+size_t ASPathGetCount(ASPath path)
+{
+    return path? path->count : 0;
+}
+
+void *ASPathGetNode(ASPath path, size_t index)
+{
+    return (path && index < path->count)? (path->nodeKeys + (index * path->nodeSize)) : NULL;
+}
+
+
+
+
+
+// Psyny Functions ---------------------------------------------
+
+
+
+
+typedef struct gridCell { 
+	char isBlocked;
+	float   costToEnter;
+} GridCell;	
+
+typedef struct gridLine { 
+	GridCell* cols;	
+} GridLine;		
+
+typedef struct grid {
+	int colQty;
+	int rowQty;
+	
+	int fieldSizeX;
+	int fieldSizeY;
+	
+	int cellSizeX;
+	int cellSizeY;
+	
+	GridLine* rows;
+} Grid;	
+
+typedef struct nodeAS {
+	int x;
+	int y;
+} NodeAS;
+
+// Global Grid
+static Grid* grid;
+
+// Start Grid
+void AST_initGrid( int rows , int cols , int fieldSizeX , int fieldSizeY ) {
+	int i,j;
+	
+	grid = (Grid*)malloc(sizeof(Grid));
+	
+	grid->fieldSizeX = fieldSizeX;
+	grid->fieldSizeY = fieldSizeY;
+	
+	grid->cellSizeX = fieldSizeX/cols;
+	grid->cellSizeY = fieldSizeY/rows;
+	
+	grid->rowQty = rows;
+	grid->colQty = cols;
+	
+	grid->rows = (GridLine*)malloc(sizeof(GridLine)*rows);
+	
+	for( i = 0 ; i < rows ; i++ ) {
+		grid->rows[i].cols = (GridCell*)malloc(sizeof(GridCell)*cols);
+		
+		for( j = 0 ; j < cols ; j++ ) {
+			
+			grid->rows[i].cols[j].isBlocked = 0;
+		}
+	}	
+}
+
+// Resert isBlocked status to zero for all grid
+void AST_zeroGrid( void ) {
+	int i , j;
+	for( i = 0 ; i < grid->rowQty ; i++ ) {
+		for( j = 0 ; j < grid->colQty ; j++ ) {
+			grid->rows[i].cols[j].isBlocked = 0;
+			grid->rows[i].cols[j].costToEnter = 1.0;
+		}	
+	}		
+}	
+
+// Check if a cell is in grid
+int AST_isInGrid( int row , int col ) {
+	if(	row < 0
+	|| 	col < 0
+	||	row >= grid->rowQty
+	||	col >= grid->colQty
+	) {
+		return 0;
+	} else {
+		return 1;
+	}
+}
+
+// Get Cell Size
+int AST_getCellSize( char type ) {
+	if( type == 1 ) {
+		return grid->cellSizeX;
+	} else {
+		return grid->cellSizeY;
+	}
+}
+
+// Coords to Grid
+void AST_coordToGrid( int *row , int *col , int x , int y ) {
+	*row = y / grid->cellSizeY;
+	*col = x / grid->cellSizeX;	
+}
+
+// Grid to coord with adjust
+void AST_gridToCoord( int *x , int *y , int row , int col , int adj) {
+	(*x) = grid->cellSizeX * col;
+	(*y) = grid->cellSizeY * row;
+	
+	if( adj ) {
+		(*x) = (*x) + ( rand() % (grid->cellSizeX) );
+		(*y) = (*y) + ( rand() % (grid->cellSizeY) );
+	}
+}
+
+// Set coord grid blocked state
+void AST_setGridState( int row , int col , int state ) {
+	grid->rows[row].cols[col].isBlocked = state;
+}
+
+// Set coord grid blocked state ( from coords )
+void AST_setGridStateFromCoords( int x , int y , int state ) {
+	int col , row;
+	AST_coordToGrid( &row , &col , x , y );
+	grid->rows[row].cols[col].isBlocked = state;
+}
+
+// Get grid blocked state
+int AST_getGridState( int row , int col ) {
+	return grid->rows[row].cols[col].isBlocked;
+}	
+
+// Get grid blocked state ( from coords )
+int AST_getGridStateFromCoords( int x , int y ) {
+	int col , row;
+	AST_coordToGrid( &row , &col , x , y );	
+	return grid->rows[row].cols[col].isBlocked;
+}	
+
+// Set Grid blocked to all cells in a line
+void AST_setGridStateFromCoords_Line( int x1 , int y1 , int x2 , int y2 , int state ) {
+	int col1 , row1;
+	int col2 , row2;
+	int tCol , tRow;
+	int x3 , y3;
+	int steps , i;
+		
+	float mx , my;
+	
+	// Inverter coordenadas
+	if( x1 > x2 ) {
+		x3 = x1;
+		x1 = x2;
+		x2 = x3;
+	}
+	
+	if( y1 > y2 ) {
+		y3 = y1;
+		y1 = y2;
+		y2 = y3;
+	}
+	
+	// Transforma coordenadas fisicas em coordenadas do grid
+	AST_coordToGrid( &row1 , &col1 , x1 , y1 );
+	AST_coordToGrid( &row2 , &col2 , x2 , y2 );	
+	
+	// Calcula o incremento do loop
+	if( (col2 - col1) > (row2 - row1) ) {
+		steps = (col2 - col1);
+		mx = 1;
+		my = 1.0 * (row2 - row1) / steps;
+	} else {
+		steps = (row2 - row1);
+		mx = 1.0 * (col2 - col1) / steps;
+		my = 1;
+	}
+	
+	// loop
+	for( i = 0 ; i < steps ; i++ ) {
+		tCol = col1 + ((int)(i * mx));
+		tRow = row1 + ((int)(i * my));
+		grid->rows[tRow].cols[tCol].isBlocked = state;
+		
+		// Celula acima
+		tRow--;
+		if( AST_isInGrid( tRow , tCol ) ) {
+			grid->rows[tRow].cols[tCol].isBlocked = state;
+		}
+		
+		// Celula anterior
+		tCol--;
+		tRow++;
+		if( AST_isInGrid( tRow , tCol ) ) {
+			grid->rows[tRow].cols[tCol].isBlocked = state;
+		}		
+	}
+	
+
+}
+
+// Set Grid blocked state to all cells in radius around a point
+void AST_setGridStateFromCoords_Circle( int x , int y , int radius , int state ) {
+	int dist , steps;
+	int col , row;
+	int tx , ty;
+	
+	// Transforma coordenadas fisicas em coordenadas do grid
+	AST_coordToGrid( &col , &row , x , y );	
+	AST_coordToGrid( &dist , &dist , radius , radius );	
+	
+	steps = dist*2 +1;
+	
+	for( tx = col - dist ; tx <= (col+dist) ; tx++ ) {
+		for( ty = row - dist ; ty <= (row+dist) ; ty++ ) {
+			if( AST_isInGrid( ty , tx ) ) {
+				if ( sqrt( pow( tx - col , 2 ) + pow( ty - row , 2 ) ) <= dist ) {
+					grid->rows[tx].cols[ty].isBlocked = state;
+				}
+			}
+		}
+	} 
+}
+
+
+// Set Grid blocked state to all cells in square around a point
+void AST_setGridStateFromCoords_Square( int x , int y , int edge , int state ) {
+	int dist , steps;
+	int col , row;
+	int tx , ty;
+	
+	// Transforma coordenadas fisicas em coordenadas do grid
+	AST_coordToGrid( &col , &row , x , y );	
+	AST_coordToGrid( &dist , &dist , edge , edge );	
+	
+	steps = dist*2 +1;
+	
+	for( tx = col - dist ; tx <= (col+dist) ; tx++ ) {
+		for( ty = row - dist ; ty <= (row+dist) ; ty++ ) {
+			if( AST_isInGrid( ty , tx ) ) {
+				grid->rows[tx].cols[ty].isBlocked = state;
+			}
+		}
+	} 
+}
+
+// Set cost for cells based on proximity
+void AST_addCostProximity( int x , int y , int radius , float maxCost) {
+	int dist , steps;
+	int tempDist;
+	int col , row;
+	int tx , ty;
+	
+	float cost;
+	
+	// Transforma coordenadas fisicas em coordenadas do grid
+	AST_coordToGrid( &col , &row , x , y );	
+	AST_coordToGrid( &dist , &dist , radius , radius );	
+	
+	steps = dist*2 +1;
+	
+	for( tx = col - dist ; tx <= (col+dist) ; tx++ ) {
+		for( ty = row - dist ; ty <= (row+dist) ; ty++ ) {
+			if( AST_isInGrid( ty , tx ) ) {
+				if ( !(grid->rows[tx].cols[ty].isBlocked) ) {			
+					tempDist = sqrt( pow( tx - col , 2 ) + pow( ty - row , 2 ) );
+					cost = maxCost * ( dist - tempDist ) / dist;
+					if( grid->rows[tx].cols[ty].costToEnter < cost )
+						grid->rows[tx].cols[ty].costToEnter = cost;					
+				}
+			}
+		}
+	} 		
+}
+
+// Essenciais para o funcionamento do AStar ( customizadas )
+
+// Set Neighbors
+static void AST_neighbors( ASNeighborList neighbors , void *node , void *context ) {
+	NodeAS *nodeAS = (NodeAS*)node;
+	NodeAS *newNodeAS;
+	
+	int tx , ty;
+	float cost;
+	
+	for( tx = nodeAS->x -1 ; tx <= nodeAS->x + 1 ; tx++ ) {
+		for( ty = nodeAS->y -1 ; ty <= nodeAS->y + 1 ; ty++ ) {
+	
+			if ( ( tx != nodeAS->x || ty != nodeAS->y )
+			//&&  !AST_getGridState( nodeAS->x , nodeAS->y )
+			&&	tx >= 0 
+			&& 	tx < grid->colQty
+			&& 	ty >= 0
+			&& 	ty < grid->rowQty
+			&&	!AST_getGridState( tx , ty )
+			) {			
+				
+				newNodeAS = (NodeAS*)malloc( sizeof(NodeAS) );
+				newNodeAS->x = tx;
+				newNodeAS->y = ty;
+				
+				// Custo para entrar em celulas
+				cost = grid->rows[tx].cols[ty].costToEnter;
+				
+				
+				// Custo de para se mover na diagonal é diferente do que na ortogonal
+				// Evita que o A* tente "contornar" os obstaculos
+				if( tx == nodeAS->x || ty == nodeAS->y )
+					cost = cost * 1.0;
+				else
+					cost = cost * 1.5;
+				
+				ASNeighborListAdd( neighbors , newNodeAS , cost );					
+			}
+			
+		}
+	}	
+}
+
+// A* heuristic 
+static float AST_heuristic( void* fromNode , void* toNode , void *context) {
+	NodeAS *from = (NodeAS*)fromNode;
+	NodeAS *to = (NodeAS*)toNode;
+	
+	int dx , dy;
+	
+	dx = from->x - to->x;
+	dy = from->y - to->y;
+	
+	return sqrt( pow(dx , 2) + pow(dy , 2) );	
+}
+
+// Informacao do No
+static const ASPathNodeSource PathNodeSource = {
+	sizeof(NodeAS),
+	&AST_neighbors,
+	&AST_heuristic,
+	NULL,
+	NULL
+};
+	
+
+
+
+// -----------------------------------
+
+
+// Retorna a direção baseado ( radianos )  em dois pontos
+float MPT_getDirection( int x1, int y1, int x2, int y2) {
+	int dx , dy;
+	float dist, direction;
+	
+	dx = (x2 - x1);
+	dy = (y2 - y1);
+	
+	if( dx == 0 && dy > 0 )
+		direction = 0.5 * M_PI;
+	else if( dx == 0 && dy < 0 )
+		direction = 1.5  * M_PI;
+	else if( dy == 0 && dx < 0 )
+		direction = M_PI;
+	else if( dy == 0 && dx > 0 )
+		direction = 0;
+	else if( dy !=0 && dx != 0 )
+		direction = atan2( dy , dx );
+	else
+		direction = 0;
+		
+	return direction;
+}
+
+
+// Get unblocked point closest to distance DIST from point x,y in direction sDir
+void MPT_getClearPoint( int* rx , int* ry , int x , int y , int dist , float sDir ) {
+
+	float angularSeg = M_PI / 6;
+	int col , row;
+	int x2 , y2;
+	int maxDist;
+	int stopFlag = 0;
+	int i;
+	
+	// Um pouco de aleatoriedade
+	if (x%2) {
+		angularSeg = angularSeg * -1;
+	}
+	
+	
+	if( grid->fieldSizeX > grid->fieldSizeY )
+		maxDist = (int)grid->fieldSizeX;
+	else
+		maxDist = (int)grid->fieldSizeY;
+	
+	while( dist < maxDist ) {
+		for( i = 0 ; i < 12 ; i++ ) {
+			x2 = x + ( cos(sDir) * dist );
+			y2 = y + ( sin(sDir) * dist );
+			AST_coordToGrid( &row , &col , x2 , y2 );
+			
+			if( AST_isInGrid( row, col )
+			&& !(AST_getGridState( row, col ))
+			) {
+				stopFlag = 1;
+				break;
+			} 
+			// A ideia é testar caminhos a frente e ao lado
+			sDir = sDir + angularSeg + M_PI;
+		}
+		if( stopFlag ) {
+			(*rx) = x2;
+			(*ry) = y2;		
+			break;
+		}
+		dist = dist + ( grid->cellSizeX + grid->cellSizeY );
+	}
+}
+
+// A partir das coordenadas X , Y, um caminho e a ultima posicao no caminho; descobre a direcao para chegar na proxima posicao.
+// Retorna 0 caso ja esteja na proxima posicao
+// Retorna 1 caso contrario, e muda (*direction) para a direcao correta
+int MPT_nextDirection( float* direction , int x , int y , int pathPtr , int pathIndex ) { 
+	ASPath path = (ASPath)pathPtr;	
+	NodeAS* node = (NodeAS*)ASPathGetNode(path, pathIndex + 1);
+	int col , row;
+	int x2 , y2;
+	
+	// Checa se a posicao já nao é a desejada
+	AST_coordToGrid( &row , &col , x , y );	
+	if( col == node->x && row == node->y )
+		return 0;
+	
+	// Descobrir o caminho	
+	AST_gridToCoord( &x2 , &y2 , node->x , node->y , 0);
+	
+	// Direção a partir do caminho
+	(*direction) = MPT_getDirection( x , y , x2 , y2 );
+	
+	return 1;	
+}
+
+
+// Retorna tamanho do caminho
+int AST_getPathSize( int pathPtr ) {
+	ASPath path = (ASPath)pathPtr;
+	return ASPathGetCount(path);
+}
+
+
+// Destroi Caminho
+void AST_destroyPath( int pathPtr ) {
+	ASPath path = (ASPath)pathPtr;
+	ASPathDestroy(path);
+}
+
+
+
+
+
+// Cria caminho do ponto A ( x1 , y1 ) ao ponto B ( x2 , y2 )
+int AST_findPath( int x1 , int y1, int x2 , int y2 ) {
+	int row1 , col1 , row2 , col2;
+	NodeAS from , to;
+	ASPath path;
+		
+	AST_coordToGrid( &col1 , &row1 , x1 , y1 );	
+	AST_coordToGrid( &col2 , &row2 , x2 , y2 );
+		
+	from.x = col1;
+	from.y = row1;
+	
+	to.x = col2;
+	to.y = row2;
+	
+	path = ASPathCreate( &PathNodeSource , NULL , &from , &to );
+
+	return (int)path;
+}
+	
+	
+// Testes/DEBUG
+void AST_TST_PathGetCoord( int* x , int *y , int pathPtr , int index ) {
+	ASPath path = (ASPath)pathPtr;
+	NodeAS* node = (NodeAS*)ASPathGetNode(path, index);
+	
+	AST_gridToCoord( x , y , node->x , node->y , 0 );
+}
+
+int AST_TST_GetSize( int pathPtr ) {
+	ASPath path = (ASPath)pathPtr;
+	return ASPathGetCount(path);
+}
+
+	
+// Ceu File End
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
