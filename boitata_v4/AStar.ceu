@@ -790,6 +790,15 @@ void AST_setGridStateFromCoords_Square( int x , int y , int edge , int state ) {
 	} 
 }
 
+// Set cost for cells based on coord
+void AST_addCostCoord( int x , int y , float cost) {
+	int col , row;
+	
+	// Transforma coordenadas fisicas em coordenadas do grid
+	AST_coordToGrid( &col , &row , x , y );	
+	grid->rows[row].cols[col].costToEnter = cost;			
+}
+
 // Set cost for cells based on proximity
 void AST_addCostProximity( int x , int y , int radius , float maxCost) {
 	int dist , steps;
@@ -817,6 +826,67 @@ void AST_addCostProximity( int x , int y , int radius , float maxCost) {
 			}
 		}
 	} 		
+}
+
+// Set cost for cells in a line
+void AST_addCostLine( int x1 , int y1 , int x2 , int y2 , float cost ) {
+	int col1 , row1;
+	int col2 , row2;
+	int tCol , tRow;
+	int x3 , y3;
+	int steps , i;
+		
+	float mx , my;
+	
+	// Inverter coordenadas
+	if( x1 > x2 ) {
+		x3 = x1;
+		x1 = x2;
+		x2 = x3;
+	}
+	
+	if( y1 > y2 ) {
+		y3 = y1;
+		y1 = y2;
+		y2 = y3;
+	}
+	
+	// Transforma coordenadas fisicas em coordenadas do grid
+	AST_coordToGrid( &row1 , &col1 , x1 , y1 );
+	AST_coordToGrid( &row2 , &col2 , x2 , y2 );	
+	
+	// Calcula o incremento do loop
+	if( (col2 - col1) > (row2 - row1) ) {
+		steps = (col2 - col1);
+		mx = 1;
+		my = 1.0 * (row2 - row1) / steps;
+	} else {
+		steps = (row2 - row1);
+		mx = 1.0 * (col2 - col1) / steps;
+		my = 1;
+	}
+	
+	// loop
+	for( i = 0 ; i < steps ; i++ ) {
+		tCol = col1 + ((int)(i * mx));
+		tRow = row1 + ((int)(i * my));
+		grid->rows[tRow].cols[tCol].costToEnter = cost;
+		
+		// Celula acima
+		tRow--;
+		if( AST_isInGrid( tRow , tCol ) ) {
+			grid->rows[tRow].cols[tCol].costToEnter = cost;
+		}
+		
+		// Celula anterior
+		tCol--;
+		tRow++;
+		if( AST_isInGrid( tRow , tCol ) ) {
+			grid->rows[tRow].cols[tCol].costToEnter = cost;
+		}		
+	}
+	
+
 }
 
 // Essenciais para o funcionamento do AStar ( customizadas )
