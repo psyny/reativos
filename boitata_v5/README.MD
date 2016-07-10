@@ -7,10 +7,10 @@ Apenas rod os batches "make" para o jogo sem debug. Ou "debug_x" para debugar as
 Boitata: Jogador
 
 Objetivo: Devorar os Caçadores
-Os caçadores são verdes e vão tentar fugir do boitata.
+Os caçadores vão tentar fugir do boitata.
 Eles ficam mais escuros e lentos com o passar do tempo.
-Quanto mais verdes e mais rapido, mais pontos eles valem.
-Devorar um caçador quando ele fica totalmente preto e com olhos brancos resulta em perda de pontos.
+Quanto coloridos e mais rapidos, mais pontos eles valem.
+Devorar um caçador quando ele fica totalmente preto e com olhos totalmente brancos resulta em perda de pontos.
 
 
 Derrota:
@@ -34,7 +34,10 @@ W: Diminui o raio da curva
 S: Aumenta o raio da curva
 
 
-Jogador: 3 ( amarelho )
+Jogador: 3 ( verde )
 KeyPad 4: Faz curva a esquerda do boitata
 KeyPad 6: Faz curva a direita do boitata
 KeyPad 8: Diminui o raio da curva
+
+
+Obs.: Em modo single player o boitata assume uma cor aleatoria.
