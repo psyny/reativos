@@ -1,0 +1,408 @@
+#define SFX_ColorUpdateInterval 20
+
+// Wind Field
+#define WindField_FloatToIntFactor 100.0
+class WindField with
+	var int		changeBaseInterval			= 5000;
+	var int		changeIntervalVariation		= 20;	// percent
+	var float	directionDesired			= 2.0 * PI * (_rand()%10000) / 10000; 	
+	var float	directionNow				= 0;
+	var float	directionChangeSpeed		= 0.0001; // absolute
+	var float	directionMaxVariation		= 2.0 * PI * 0.2; // absolute
+do
+	var int		intChangeMin = changeBaseInterval - ( changeBaseInterval * changeIntervalVariation * 0.01 );
+	var int 	intChangeInc = ( changeBaseInterval * changeIntervalVariation * 0.01 * 2 );
+	var int		intDirectionMaxVariation = WindField_FloatToIntFactor*directionMaxVariation*2;
+	var float	intDirectionDiff = 0;
+	var float	intDirectionDT = 0;
+	
+	directionNow = directionDesired;
+	
+	par/or do
+		// Wind goal direction
+		every ( intChangeMin + ( _rand() % intChangeInc ) )ms do
+			directionDesired = directionDesired - directionMaxVariation + ( (_rand()%intDirectionMaxVariation) / WindField_FloatToIntFactor );
+			//_printf("\nDebug: Wind Direction: %.3f\tNow: %.3f",directionDesired,directionNow);
+		end
+	with
+		// Wind actual direction
+		every dt in SDL_DT do
+			intDirectionDiff = directionDesired - directionNow;
+			intDirectionDT = ( directionChangeSpeed * dt );
+			if _abs( intDirectionDiff ) > intDirectionDT then
+				if intDirectionDiff > 0 then
+					directionNow = directionNow + intDirectionDT;
+				else
+					directionNow = directionNow - intDirectionDT;
+				end
+			else
+				directionNow = directionDesired;
+			end
+		end
+	end
+end
+
+// Flames: Square particles
+class Flame with
+	var _SDL_Renderer& 	ren;
+	var WindField&		windField;
+	
+	var Vetor2D			startPos;	
+	var RGBA 			baseColor 		= RGBA( 0xFF , 0xFF , 0xFF , 0x00 );
+	var int 			baseSpeed 		= (_rand()%20)+40;
+	var float			baseDirection 	= 2.0 * PI * (_rand()%10000) / 10000;
+	var int				baseSize 		= 2;
+	var int				baseLife 		= (_rand()%1000) + 100 ;
+	var int				baseEnergy 		= 20;
+	var float			noDecayPhase	= 0.05; // Percent
+do
+	var float 	phase		= 0;
+	var float 	phaseInc 	= 1.0/(baseLife*1.0/SFX_ColorUpdateInterval);
+
+	baseDirection = windField.directionNow;
+	
+	// Corpo fisico
+	var GEO_PolarPhysOrganism corpoFisico with
+		this.velocityIntensity = baseSpeed;
+		this.position = Vetor2D( startPos.x * 1000 , startPos.y * 1000) ;
+		this.velocityDirection = baseDirection;
+	end;
+
+	// Corpo Visivel 
+	var _SDL_Rect visualBox = _SDL_Rect( startPos.x , startPos.y , baseSize , baseSize );
+	var RGBA tColor = RGBA( 0 , 0 , 0 , 0);
+
+		
+	// Life Loop
+	par/or do
+		await (baseLife)ms;
+	with
+	// Color
+		var float energyPhase = noDecayPhase;
+	
+		// Phase 1: No Decay Phase
+			tColor = RGBA( baseColor.r + baseEnergy , baseColor.g + baseEnergy , baseColor.b + baseEnergy , 0 );
+			loop do
+				if phase > noDecayPhase then
+					break;
+				end
+			
+				await (SFX_ColorUpdateInterval)ms;		
+				phase = phase + phaseInc;		
+			end
+		
+		// Phase 2: Energy Decay Phase
+			// Discover the strongest color
+			var int		higherColor 	= baseColor.r;
+			if baseColor.g > higherColor then
+				higherColor = baseColor.g;
+			end
+			if baseColor.b > higherColor then
+				higherColor = baseColor.b;
+			end
+			
+			energyPhase 				= ( 1.0 * baseEnergy ) / ( baseEnergy + ( higherColor * 5 ) );		
+			energyPhase 				= ( 1.0 - noDecayPhase ) * energyPhase;
+			energyPhase 				= noDecayPhase + energyPhase;
+
+			var float	phaseScale		= ( 1.0 / ( energyPhase - noDecayPhase ) ) * baseEnergy;
+			var int		energy 			= baseEnergy;
+			
+			loop do
+				if phase > energyPhase then
+					break;
+				end
+			
+				tColor = RGBA( baseColor.r + energy , baseColor.g + energy , baseColor.b + energy , 0 );
+				
+				energy = baseEnergy - ( ( phase - noDecayPhase ) * phaseScale );
+				
+				await (SFX_ColorUpdateInterval)ms;		
+				phase = phase + phaseInc;		
+			end
+
+		// Phase 3: Color Decay Phase
+			phaseScale = 1.0;
+			// Discover the strongest color
+			loop do
+				if phase > 1.0 then
+					break;
+				end
+			
+				phaseScale = 1.0 - ( ( phase - energyPhase ) / ( 1.0 - energyPhase ) ); 
+			
+				tColor = RGBA( baseColor.r * phaseScale , baseColor.g * phaseScale , baseColor.b * phaseScale , 0 );
+				
+				await (SFX_ColorUpdateInterval)ms;		
+				phase = phase + phaseInc;		
+			end			
+	
+			await FOREVER;
+	with
+	// Tamanho	
+		var int size = baseSize;
+		every (SFX_ColorUpdateInterval)ms do
+			visualBox.w = size;
+			visualBox.h = size;
+			size = ( baseSize * ( 1.0 - phase ) ) + 1;
+		end
+	with
+	// Direcao - Base
+		every sd in SDL_DT do
+			baseDirection = windField.directionNow;
+		end		
+	with
+	// Direcao
+		loop do
+			corpoFisico.angularVelocity = 0.001 + (0.001*(_rand()%20));
+			if 	( corpoFisico.velocityDirection < (baseDirection-0.6) and corpoFisico.angularVelocity < 0 )
+			or	( corpoFisico.velocityDirection > (baseDirection+0.6) and corpoFisico.angularVelocity > 0 ) 
+			then
+				corpoFisico.angularVelocity = corpoFisico.angularVelocity * -1;
+			end
+			await ((_rand()%50)+50)ms;
+		end
+	with
+	// Render
+		every SDL_REDRAW do
+			if tColor.r > 255 then
+				tColor.r = 255; end
+			if tColor.g > 255 then
+				tColor.g = 255; end
+			if tColor.b > 255 then
+				tColor.b = 255; end	
+				
+			if tColor.r < 0 then
+				tColor.r = 0; end
+			if tColor.g < 0 then
+				tColor.g = 0; end
+			if tColor.b < 0 then
+				tColor.b = 0; end
+						
+			visualBox.x = corpoFisico.position.x / 1000;
+			visualBox.y = corpoFisico.position.y / 1000;		
+			_SDL_SetRenderDrawColor( &&this.ren , tColor.r , tColor.g , tColor.b , tColor.a );
+			_SDL_RenderFillRect( &&this.ren , &&(visualBox) );
+		end			
+	end
+end
+
+
+// Spark: Line particles
+class Spark with
+	var _SDL_Renderer& 	ren;
+	var WindField&		windField;
+	
+	var Vetor2D			startPos;	
+	var RGBA 			baseColor 		= RGBA( 0xFF , 0xFF , 0xFF , 0x00 );
+	var int 			baseSpeed 		= (_rand()%40)+140;
+	var float			baseDirection 	= 2.0 * PI * (_rand()%10000) / 10000;
+	var int				baseSize 		= 3;
+	var int				baseLife 		= (_rand()%600) + 500 ;
+	var int				baseEnergy 		= 200;
+	var float			noDecayPhase	= 0.4; // Percent
+do
+	var float 	phase		= 0;
+	var float 	phaseInc 	= 1.0/(baseLife*1.0/SFX_ColorUpdateInterval);
+
+	baseDirection = windField.directionNow;
+	
+	// Corpo fisico
+	var GEO_PolarPhysOrganism corpoFisico with
+		this.velocityIntensity = baseSpeed;
+		this.position = Vetor2D( startPos.x * 1000 , startPos.y * 1000) ;
+		this.velocityDirection = baseDirection;
+	end;
+
+	// Corpo Visivel 
+	var Vetor2D		startPosition	=	Vetor2D( startPos.x , startPos.y );
+	var Vetor2D		endPosition		=	Vetor2D( startPos.x , startPos.y );
+	var int size = baseSize;
+	var RGBA tColor = RGBA( 0 , 0 , 0 , 0);
+
+		
+	// Life Loop
+	par/or do
+		await (baseLife)ms;
+	with
+	// Color
+		var float energyPhase = noDecayPhase;
+	
+		// Phase 1: No Decay Phase
+			tColor = RGBA( baseColor.r + baseEnergy , baseColor.g + baseEnergy , baseColor.b + baseEnergy , 0 );
+			loop do
+				if phase > noDecayPhase then
+					break;
+				end
+			
+				await (SFX_ColorUpdateInterval)ms;		
+				phase = phase + phaseInc;		
+			end
+		
+		// Phase 2: Energy Decay Phase
+			// Discover the strongest color
+			var int		higherColor 	= baseColor.r;
+			if baseColor.g > higherColor then
+				higherColor = baseColor.g;
+			end
+			if baseColor.b > higherColor then
+				higherColor = baseColor.b;
+			end
+			
+			energyPhase 				= ( 1.0 * baseEnergy ) / ( baseEnergy + ( higherColor * 5 ) );		
+			energyPhase 				= ( 1.0 - noDecayPhase ) * energyPhase;
+			energyPhase 				= noDecayPhase + energyPhase;
+
+			var float	phaseScale		= ( 1.0 / ( energyPhase - noDecayPhase ) ) * baseEnergy;
+			var int		energy 			= baseEnergy;
+			
+			loop do
+				if phase > energyPhase then
+					break;
+				end
+			
+				tColor = RGBA( baseColor.r + energy , baseColor.g + energy , baseColor.b + energy , 0 );
+				
+				energy = baseEnergy - ( ( phase - noDecayPhase ) * phaseScale );
+				
+				await (SFX_ColorUpdateInterval)ms;		
+				phase = phase + phaseInc;		
+			end
+
+		// Phase 3: Color Decay Phase
+			phaseScale = 1.0;
+			// Discover the strongest color
+			loop do
+				if phase > 1.0 then
+					break;
+				end
+			
+				phaseScale = 1.0 - ( ( phase - energyPhase ) / ( 1.0 - energyPhase ) ); 
+			
+				tColor = RGBA( baseColor.r * phaseScale , baseColor.g * phaseScale , baseColor.b * phaseScale , 0 );
+				
+				await (SFX_ColorUpdateInterval)ms;		
+				phase = phase + phaseInc;		
+			end			
+	
+			await FOREVER;
+	with
+	// Direcao - Base
+		every sd in SDL_DT do
+			baseDirection = windField.directionNow;
+		end
+	with
+	// Direcao - Caos
+		loop do
+			corpoFisico.angularVelocity = 0.001 + (0.001*(_rand()%20));
+			if 	( corpoFisico.velocityDirection < (baseDirection-0.6) and corpoFisico.angularVelocity < 0 )
+			or	( corpoFisico.velocityDirection > (baseDirection+0.6) and corpoFisico.angularVelocity > 0 ) 
+			then
+				corpoFisico.angularVelocity = corpoFisico.angularVelocity * -1;
+			end
+			await ((_rand()%50)+50)ms;
+		end
+	with
+	// Render
+		every SDL_REDRAW do
+			if tColor.r > 255 then
+				tColor.r = 255; end
+			if tColor.g > 255 then
+				tColor.g = 255; end
+			if tColor.b > 255 then
+				tColor.b = 255; end	
+				
+			if tColor.r < 0 then
+				tColor.r = 0; end
+			if tColor.g < 0 then
+				tColor.g = 0; end
+			if tColor.b < 0 then
+				tColor.b = 0; end
+						
+			startPosition.x = corpoFisico.position.x / 1000;
+			startPosition.y = corpoFisico.position.y / 1000;
+			endPosition.x = startPosition.x + ( _cos(corpoFisico.velocityDirection) * size );
+			endPosition.y = startPosition.y + ( _sin(corpoFisico.velocityDirection) * size );
+			
+			_SDL_SetRenderDrawColor( &&this.ren , tColor.r , tColor.g , tColor.b , tColor.a );
+			_SDL_RenderDrawLine( &&this.ren ,  startPosition.x , startPosition.y , endPosition.x , endPosition.y );
+		end				
+	end
+end
+
+
+
+// Fire Emitter
+class FireEmitter with
+	var _SDL_Renderer& 		ren;
+	var	WindField&			windField;
+	var GEO_Area&			emitterArea;
+	
+	var int 				emitInterval			=	50; //ms
+	var int					emitIntervalVariation	=	0; // Percent
+	var RGBA 				baseColor 				= RGBA( 255 , 255 , 255 , 0);
+	
+	pool Flame[]& 			flamePool;
+	pool Spark[]&			dimSparkPool; 
+	pool Spark[]&			brightSparkPool; 
+	
+	event void destroy;
+	event void disable;
+	event void enable;
+do
+	var int		intIntervalMin = emitInterval - ( emitInterval * emitIntervalVariation * 0.01 );
+	var int 	intIntervalInc = ( emitInterval * emitIntervalVariation * 0.01 * 2 );
+	if intIntervalInc <= 0 then
+		intIntervalInc = 1;
+	end
+
+	// Life Loop
+	par/or do
+		loop do
+			par/or do
+				// Flame Particles
+				loop do
+					await ( intIntervalMin + ( _rand() % intIntervalInc ) )ms;
+					spawn Flame in flamePool with
+						this.ren 		= &ren;	
+						this.baseColor 	= baseColor;
+						this.startPos 	= emitterArea.getRandomInsidePoint();
+						this.windField	= &windField;
+					end;
+				end	
+			with
+				// Dim Spark Particles
+				loop do
+					await ( ( intIntervalMin + ( _rand() % intIntervalInc ) ) * 2 )ms;
+					spawn Spark in dimSparkPool with
+						this.ren 		= &ren;	
+						this.baseColor 	= baseColor;
+						this.baseLife 	= (_rand()%1000) + 100 ;
+						this.baseEnergy = 50;
+						this.baseSpeed 	= (_rand()%40)+40;
+						this.noDecayPhase	= 0.1;
+						this.startPos 	= emitterArea.getRandomInsidePoint();
+						this.windField	= &windField;
+					end;
+				end					
+			with
+				// Bright Spark Particles
+				loop do
+					await ( ( intIntervalMin + ( _rand() % intIntervalInc ) ) * 20 )ms;
+					spawn Spark in brightSparkPool with
+						this.ren 		= &ren;	
+						this.baseColor 	= baseColor;
+						this.startPos 	= emitterArea.getRandomInsidePoint();
+						this.windField	= &windField;
+					end;
+				end			
+			with
+				await this.disable;	
+			end
+			await this.enable;
+		end
+	with
+		await this.destroy;
+	end
+	
+end

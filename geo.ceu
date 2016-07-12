@@ -1,0 +1,202 @@
+/* --------------------------------------------------------------------------
+	Geometry
+--------------------------------------------------------------------------*/
+data Vetor2D with
+	var int x,y;
+end;
+
+data Polar2D with
+	var float angle;
+	var int distance;
+end;
+
+data RGBA with
+	var int r,g,b,a;
+end;
+
+// DEBUG
+class Uni with
+	var int i = 0;
+	var float f = 0;
+	event void destroy;
+do
+	await this.destroy;
+end
+
+// Abstract Area
+#define GEO_AREA_POINT 0
+#define GEO_AREA_SQUARE 1
+#define GEO_AREA_RECTANGLE 2
+#define GEO_AREA_CIRCLE 3
+class GEO_Area with
+	var int			type 		= 0;
+	var Vetor2D		center		= Vetor2D( 0 , 0 );
+	var int			attribute1	= 0;
+	var int			attribute2	= 0;
+	
+	// Check if a point is in the area or not
+	function (Vetor2D point)=>int isInArea; 
+	
+	// Get a random point inside the area
+	function (void)=>Vetor2D getRandomInsidePoint; 
+	
+	// End this organism loop
+	event void destroy;
+do
+	function (Vetor2D point)=>int isInArea do
+		return 1;
+	end
+
+	function (void)=>Vetor2D getRandomInsidePoint do
+	
+		if type == GEO_AREA_POINT then
+			var Vetor2D vet = Vetor2D( center.x , center.y );
+			return vet;
+			
+		else/if type == GEO_AREA_SQUARE then
+			var Vetor2D vet = Vetor2D( center.x , center.y );
+			vet.x = vet.x - (attribute1/2) + ( _rand()%attribute1 );
+			vet.y = vet.y - (attribute1/2) + ( _rand()%attribute1 );
+			return vet;			
+			
+		else/if type == GEO_AREA_RECTANGLE then
+			var Vetor2D vet = Vetor2D( center.x , center.y );
+			vet.x = vet.x - (attribute1/2) + ( _rand()%attribute1 );
+			vet.y = vet.y - (attribute2/2) + ( _rand()%attribute2 );
+			return vet;				
+
+		else/if type == GEO_AREA_CIRCLE then
+			var float flu 	= (_rand()%((int)(2000 * PI )))/1000.0;
+			var Vetor2D vet = Vetor2D( center.x , center.y );
+			var int   rad 	= (_rand()%attribute1) + 1;
+			vet.x = vet.x + ( rad * _cos(flu) );
+			vet.y = vet.y + ( rad * _sin(flu) );
+			return vet;		
+			
+		else
+			var Vetor2D vet = Vetor2D( center.x , center.y );
+			return vet;
+		end
+	end 
+
+	await this.destroy;
+end
+
+
+// A pseudo circle made of rectangles
+#define CIRCLOID_RESOLUTION 6
+class GEO_Circloid with  
+	var _SDL_Renderer& 	ren;
+	var Vetor2D			center		= Vetor2D( 0 , 0 );
+	var int				radius 		= 10;
+	var RGBA			color 		= RGBA( 0x00 , 0x00 , 0x00 , 0x00 );	
+	var _SDL_Rect 		colisionBox	= _SDL_Rect( 0 , 0 , 0 , 0 );
+	
+	function (void)=>Vetor2D getRandomInsidePosition;
+	
+	event void destroy;
+do
+	var _SDL_Rect[CIRCLOID_RESOLUTION] rects = []; 
+	
+	// Retorna posição em X e Y aleatoria mas dentro do circloide
+	function (void)=>Vetor2D getRandomInsidePosition do
+		var float flu = (_rand()%((int)(2000 * PI )))/1000.0;
+		var Vetor2D vet = Vetor2D( center.x , center.y );
+		vet.x = vet.x + ( radius * _cos(flu) );
+		vet.y = vet.y + ( radius * _sin(flu) );
+		return vet;
+	end
+
+	// Calcula passo entre os retangulos ( angulo )
+	var float 			step 		= 88.0 / (CIRCLOID_RESOLUTION + 1) / 180 * PI;
+	
+	// Inicializa retangulos
+	loop i in CIRCLOID_RESOLUTION do	
+		rects[i] = _SDL_Rect( 0 , 0 , radius , radius );
+	end 
+	
+	// Inicializa caixa de colisao
+	colisionBox = _SDL_Rect( 0 , 0 , _cos(PI/4) * radius * 2 , _sin(PI/4) * radius * 2 );
+
+	// Loop funcional
+	par/or do
+		every dt in SDL_DT do
+			colisionBox.x = center.x - ( colisionBox.w / 2 );
+			colisionBox.y = center.y - ( colisionBox.h / 2 );
+		end
+	with
+		every SDL_REDRAW do
+			var float ang = step;	
+			loop i in CIRCLOID_RESOLUTION do	
+				rects[i].w = _cos( ang ) * radius * 2;
+				rects[i].h = _sin( ang ) * radius * 2;
+				rects[i].x = center.x - ( rects[i].w / 2 );
+				rects[i].y = center.y - ( rects[i].h / 2 ); 
+				_SDL_SetRenderDrawColor( &&this.ren , color.r , color.g , color.b , color.a );
+				_SDL_RenderFillRect( &&this.ren , &&(rects[i]) );
+				
+				_SDL_SetRenderDrawColor( &&this.ren , 0xFF , 0xFF , 0xFF , 0x00 );
+				//_SDL_RenderFillRect( &&this.ren , &&(colisionBox) );
+			
+				ang = ang + step;			
+			end
+		end	
+	with
+		await this.destroy;	
+	end
+
+end  
+
+
+
+/* --------------------------------------------------------------------------
+	Fisica
+--------------------------------------------------------------------------*/
+// Organismo fisico com direção
+class GEO_PolarPhysOrganism with
+	var Vetor2D 	size 				= Vetor2D( 0 , 0 );
+	var Vetor2D 	position			= Vetor2D( 0 , 0 );
+	var float 		faceDirection 		= 0;
+	var int 		velocityIntensity 	= 0;
+	var float 		velocityDirection 	= 0;
+	var float 		angularVelocity 	= 0;	
+	var int			player				= 0;
+	var _SDL_Rect	colisionRect		= _SDL_Rect(0,0,0,0);
+	
+	// Retorna posição em X e Y da tela
+	function (void)=>Vetor2D getPosition;
+	
+	function (int player)=>GEO_PolarPhysOrganism build;
+	
+	event void destroy;
+do
+	// Definição do construtor
+	function (int player)=>GEO_PolarPhysOrganism build do
+		this.position = Vetor2D( WIN_W/2 , WIN_H/2 );
+		this.velocityDirection = 2.0 * PI * (_rand()%10000) / 10000;
+		this.velocityIntensity = SPEED;
+		this.player = player;
+	end
+				
+	// Retorna posição em X e Y da tela
+	function (void)=>Vetor2D getPosition do
+		var Vetor2D vet = Vetor2D( position.x / 1000 , position.y / 1000 );
+		return vet;
+	end
+
+	// Loop Funcional
+	par/or do
+		every dt in SDL_DT do
+			// Calcula posição
+			velocityDirection = velocityDirection + ( angularVelocity * dt );
+			position.x = position.x + ( _cos(velocityDirection) * velocityIntensity * dt );
+			position.y = position.y + ( _sin(velocityDirection) * velocityIntensity * dt );
+			colisionRect.x = position.x / 1000;
+			colisionRect.y = position.y / 1000;
+			colisionRect.w = size.x;
+			colisionRect.h = size.y;
+		end
+	with
+		await this.destroy;
+	end
+end
