@@ -2,7 +2,8 @@
 
 #define DEBUG_LV 0
 #define USE_THREAD 0
-#define	SFX_ACT 1
+#define	USE_PARTICLES 1
+#define SHOW_FPS 0
 #define TEXT_ACT 0
 
 #define SPEED 150
@@ -126,9 +127,29 @@ end
 // Geometry and Physics
 #include "geo.ceu"
 
-
 // Special Effects
 #include "sfx.ceu"
+
+// Contador de quadros
+class FrameCounter with
+    event void destroy;
+do
+    par/or do
+    	#if SHOW_FPS == 1
+        loop do
+            var int frames = 0;
+            watching 1s do
+                every dt in SDL_DT do
+                    frames = frames + 1;
+                end
+            end
+            	_printf("\nFPS: %d",frames);
+        end
+        #endif
+    with
+        await this.destroy;
+    end
+end 
 
 // Organismo que controla os daods do jogo
 class GameData with
@@ -301,6 +322,9 @@ end
 
   
 // Cabeça do boitata
+/*
+    É controlada por um jogador e geradora da estrutura de caminho para um corpo seguir
+*/
 class BoitataHead with
 	var _SDL_Renderer& 			ren;	
 	var GEO_PolarPhysOrganism& 	character;	 
@@ -384,6 +408,7 @@ class BoitataBody with
 	var int 	colorStyle	= 1;
 	
 	var int 	headDist 	= 0;
+	var int		colision	= 1;
 	
 	function (void)=>GEO_Circloid& getCircloid;
 	
@@ -438,7 +463,7 @@ do
 		this.attribute1		= body.radius;
 	end;
 	
-	#if SFX_ACT == 1
+	#if USE_PARTICLES == 1
 	var FireEmitter	fireEmitter with
 		this.ren 			= &ren;
 		this.windField		= &windField;
@@ -466,7 +491,7 @@ do
 			headDist = _BPT_moveInPath( character.player , &&node , (speed*dt) , (&&body.center.x) , (&&body.center.y) , minDist ) finalize with end;	
 			effectArea.center = body.center;
 		end
-	#if SFX_ACT == 1	
+	#if USE_PARTICLES == 1	
 	with
 		loop do
 			await this.disableFire;
@@ -478,6 +503,42 @@ do
 	with
 		await this.destroy;
 	end
+	
+	#if USE_PARTICLES == 1
+	// Efeito visual da morte
+	if onFire==1 then
+		pool Flame[PARTICLES_PER_PLAYER_PARCEL*2] flamePool;
+		pool Spark[PARTICLES_PER_PLAYER_PARCEL*2] dimSparkPool;
+		pool Spark[PARTICLES_PER_PLAYER_PARCEL*2] brightSparkPool;
+		
+		var GEO_Area effectArea with
+			this.type			= 3;
+			this.center			= body.center;
+			this.attribute1		= body.radius;
+		end;
+	
+		var FireEmitter	fireEmitter with
+			this.ren 				= &ren;
+			this.windField			= &windField;
+			this.emitterArea 		= &effectArea;
+			this.flamePool 			= &flamePool;
+			this.dimSparkPool 		= &dimSparkPool;
+			this.brightSparkPool 	= &brightSparkPool;
+				
+			this.emitInterval 		= 1;
+			this.emitIntervalVariation 	= 0;
+		
+			this.baseColor 		= body.color;
+		end;	
+		
+		colision = 0;
+		emit body.destroy;
+	
+		await 100ms;
+		emit fireEmitter.disable;			
+		await 2s;
+	end
+	#endif
 end
 
 
@@ -513,6 +574,7 @@ class Boitata with
 	function (void)=>GEO_Circloid& getHeadCircloid;
 do
 	bodyVelocity = headVelocity;
+	gameData.alivePlayers = gameData.alivePlayers + 1;
 	
 	// Cor
 	if gameData.totalPlayers > 1 then
@@ -707,7 +769,7 @@ do
 		// Destroi Cauda
 		loop i in 4 do
 			emit cauda[i].destroy;
-			await 80ms;
+			await 70ms;
 		end		
 				
 		// Destroi o corpo
@@ -719,12 +781,14 @@ do
 			if bds[i]? then
 				emit bds[i]!:destroy;
 			end
-			await 80ms;
+			await 70ms;
 		end					
 				
 		// Declara como morto
 		await 2s;
 		this.alive = 0;
+		gameData.alivePlayers = gameData.alivePlayers - 1;
+		await 3s;
 				
 	end // Main Loop End
 end
@@ -736,19 +800,24 @@ class Pathfinder with
 	var _SDL_Renderer& 	ren;
 	pool Boitata[]& boitatas;	
 	
+	var int	players = 1;
+	
 	// Retorna o endereco para uma estrutura de Path ou zero caso caminho nao encontrado
 	function (int x1 , int y1 , int x2 , int y2)=>int getPath;
 do
 	// Cria Grid de Colisoes
 	_AST_initGrid( PATH_CELLS_X , PATH_CELLS_Y , WIN_W/1000 , WIN_H/1000 );
 	
+	// Cria Lista de Caminhos
+	_AST_initPathList(MAX_HUNTERS);
+	
+	// Cria Lista de posições da cabeça
+	_AST_initHeadPositions( players );
+	
 	// Retorna o endereco para uma estrutura de Path ou zero caso caminho nao encontrado
 	function (int x1 , int y1 , int x2 , int y2)=>int getPath do
 		return 1;
 	end	
-	
-	// Path pointer ( C STRUCT POINTER )
-	var int pathPtr = 0;
 	
 	// Loop funcional
 	par do
@@ -771,14 +840,19 @@ do
 			loop btt in boitatas do
 				// Atualiza o Grid pela Posicao do Corpo
 				loop bo in btt:bodies do
-					_AST_setGridStateFromCoords_Square( bo:getCircloid().center.x , bo:getCircloid().center.y , bo:getCircloid().radius , 1 );
+					if bo:colision == 1 then
+						_AST_setGridStateFromCoords_Square( bo:getCircloid().center.x , bo:getCircloid().center.y , bo:getCircloid().radius , 1 );
+					end
 				end	
 			
-				// Atualiz o Grid pela Posicao da Cabeca
+				// Atualiza o Grid pela Posicao da Cabeca
 				_AST_setGridStateFromCoords_Circle( btt:getHeadCircloid().center.x , btt:getHeadCircloid().center.y , btt:getHeadCircloid().radius * 2 , 1 );
 			
 				// Aumenta o custo para passar perto da Cabeca
-				_AST_addCostProximity( btt:getHeadCircloid().center.x , btt:getHeadCircloid().center.y , btt:getHeadCircloid().radius * 10 , 14.0 );	
+				_AST_addCostProximity( btt:getHeadCircloid().center.x , btt:getHeadCircloid().center.y , btt:getHeadCircloid().radius * 12 , 6.0 );	
+				
+				// Grava a posição da cabeça para os renzenvous
+				_AST_setHeadPosition( btt:character.player , btt:getHeadCircloid().center.x , btt:getHeadCircloid().center.y , btt:alive );
 			end	
 			#endif
 			
@@ -798,14 +872,19 @@ do
 				_AST_addCostProximity( 250 , 100 , 100 , 10.0 );
 				_AST_setGridStateFromCoords_Circle( 250 , 250 , 50 , 1 );
 				_AST_addCostProximity( 250 , 250 , 100 , 10.0 );		
-			#endif
+			#endif		
+			
+			#if DEBUG_LV == 5
+			// Obstaculos Artificiais - Custo
+				_AST_setGridStateFromCoords_Circle( 400 , 100 , 50 , 1 );	
+			#endif				
 		end
 	#if DEBUG_LV >= 2	
 	// Desenha um caminho de teste
 	with
 		loop do
 			await (PATH_UPDATE_INTERVAL)ms;
-			pathPtr = _AST_findPath( 0 , 0 , 499 , 499 );		
+			_AST_findPath( 0 , 0 , 0 , 499 , 499 );		
 		end
 	with
 	// Desenha o caminho de teste
@@ -814,11 +893,11 @@ do
 		var int sx = _AST_getCellSize( 1 );
 		var int sy = _AST_getCellSize( 2 );
 		
-		every SDL_REDRAW do
+		every SDL_REDRAW do		
 			_SDL_SetRenderDrawColor(&&this.ren, 0xFF , 0xFF , 0x00 , 0 );
-			var int size = _AST_TST_GetSize(pathPtr);	
+			var int size = _AST_TST_GetSize(0);	
 			loop n in size do					
-				_AST_TST_PathGetCoord( &&x1 , &&y1 , pathPtr , n ) finalize with end;
+				_AST_TST_PathGetCoord( &&x1 , &&y1 , 0 , n ) finalize with end;
 				_SDL_RenderDrawLine( &&this.ren ,  x1 , y1+(sy/2) , x1+sx , y1+(sy/2) );
 				_SDL_RenderDrawLine( &&this.ren ,  x1+(sx/2) , y1 , x1+(sx/2) , y1+sy );
 			end
@@ -884,9 +963,12 @@ class Hunter with
 	var GameData&		gameData;
 	var WindField&		windField;
 	
-	var Vetor2D		startPos	= Vetor2D( (50 + (_rand()%((WIN_W/1000)-100)))*1000 , (50 + (_rand()%((WIN_H/1000)-100)))*1000 );	
-	var int			value 		= (_rand()%100) + 50;
-	var _SDL_Rect 	sensorBox	= _SDL_Rect( 0 , 0 , 0 , 0 );
+	var Vetor2D			startPos	= Vetor2D( (50 + (_rand()%((WIN_W/1000)-100)))*1000 , (50 + (_rand()%((WIN_H/1000)-100)))*1000 );	
+	var int				value 		= (_rand()%100) + 50;
+	var _SDL_Rect 		sensorBox	= _SDL_Rect( 0 , 0 , 0 , 0 );
+
+	var int[]&			hunterSlots;	
+	var int							cID			= 0; // IMPORTANTE: Usado pela estrutura em C
 	
 	event void decay; 
 	event void destroy;    
@@ -895,6 +977,15 @@ class Hunter with
 	
 do
 	var float speedScaleFactor = 0.5*(gameData.gameSpeed)/value;
+	
+	// Descobre um cID livre
+	loop i in MAX_HUNTERS do
+		if hunterSlots[i] == 0 then
+			hunterSlots[i] = 1;
+			cID = i;
+			break;
+		end
+	end
 		
 	// Corpo fisico
 	var GEO_PolarPhysOrganism hunterPO with
@@ -969,7 +1060,6 @@ do
 	var int deathType = 0;
 
 	// Variaveis do caminho
-	var int pathPtr = 0;
 	var int pathIdx = 0;
 	var int pathSiz = 0;
 	
@@ -1011,7 +1101,7 @@ do
 				hunterPO.velocityDirection = PI - (0.1*PI) + (PI*0.01*(_rand()%80));				
 			end				
 			
-			// Colisão com a cabeça dos boitatas
+			// Colisão com a cabeça dos boitatas / GOL
 			var int flagDestroy = 0;
 			var int playerRef = 0;	
 			loop btt in boitatas do									
@@ -1106,10 +1196,8 @@ do
 		
 		loop do
 			// Destroi caminho existente, caso exista
-			if pathPtr != 0 then
-				_AST_destroyPath( pathPtr );
-				pathPtr = 0;
-			end	
+			_AST_destroyPath( cID );
+				
 			// Etapa 01: Fica vagando até o boitata chegar perto
 			par/or do
 				// Direcao
@@ -1204,18 +1292,26 @@ do
 						await (RENDEZVOUS_UPDATE_INTERVAL)ms;
 					with						
 						// Destroi caminho existente, caso exista
-						if pathPtr != 0 then
-							_AST_destroyPath( pathPtr );
-							pathPtr = 0;
-						end	
+						_AST_destroyPath( cID );
 												
 						// Localizando um ponto destino para fugir ( rendezvous )
 						var int xDest = -1;
 						var int yDest = -1;	
 						var int px = hunterPO.position.x/1000;
 						var int py = hunterPO.position.y/1000;
-						_MPT_getClearPoint( &&xDest , &&yDest , px , py , 200 , runDir , 5.0 ) finalize with end; 
-						var int newRendezvous = 0;
+						var int dodgeLevel = 0;
+						
+						// Detecta possibilidade de esquivar do boitata de acordo com a distancia
+						var int minHeadDist = _MPT_minHeadDistance( px , py );
+						if minHeadDist < 100 then
+							var float chance = ( 100.0 - minHeadDist ) * 0.8;
+							if (_rand()%100 ) < chance then
+								dodgeLevel = 2 + (_rand()%5);
+							end
+						end
+						
+						// Encontra ponto de fuga
+						_MPT_getClearPoint( &&xDest , &&yDest , px , py , 200 , runDir , 5.0 , dodgeLevel ) finalize with end; 
 						
 						// Localizando uma rota de fuga para o rendezvous
 						loop do
@@ -1225,17 +1321,20 @@ do
 							py = hunterPO.position.y/1000;
 							if xDest >=0 then
 								#if USE_THREAD == 1	
-								async/thread ( px , py , xDest , yDest , pathPtr ) do				
-									pathPtr = _AST_findPath( px , py , xDest , yDest );
+								async/thread ( px , py , xDest , yDest , cID , pathSiz ) do	
+								    atomic do				
+									    _AST_findPath( cID , px , py , xDest , yDest );	
+									    pathSiz = _AST_getPathSize( cID );		
+                                    end									
 								end
 								#else
-								async ( px , py , xDest , yDest , pathPtr ) do				
-									pathPtr = _AST_findPath( px , py , xDest , yDest );
+								async ( px , py , xDest , yDest , cID , pathSiz ) do				
+									_AST_findPath( cID ,px , py , xDest , yDest );
+									pathSiz = _AST_getPathSize( cID );
 								end
 								#endif
-								pathSiz = _AST_getPathSize( pathPtr );
 							end
-					
+	
 							// Descobre se o caminho é mt curto ou se não encontrou caminho
 							if pathSiz < 5 then
 								// Caso não encontre caminho, apenas fuja na direção oposta do inimigo
@@ -1250,7 +1349,6 @@ do
 									hunterPO.velocityDirection = runDir;								
 								else
 								// Caminho muito curto, terminar trilha ( achar outro randezvous )
-									newRendezvous = 1;
 									break;
 								end
 							else
@@ -1259,7 +1357,7 @@ do
 									// Caso encontre, fugir pelo caminho encontrado
 									var int retr = 0;
 									var float dir = 0;
-									pathIdx = 1;
+									pathIdx = 5;
 						
 									loop do
 										if pathIdx >= ( pathSiz - 2 ) then
@@ -1268,7 +1366,8 @@ do
 														
 										px = hunterPO.position.x/1000;
 										py = hunterPO.position.y/1000;
-										retr = _MPT_nextDirection( &&dir , px , py , pathPtr , pathIdx ) finalize with end;
+
+										retr = _MPT_nextDirection( &&dir , px , py , cID , pathIdx ) finalize with end;
 										if retr == 1 then
 											hunterPO.velocityDirection = dir;
 										else
@@ -1283,11 +1382,13 @@ do
 								end			
 							end		
 							
+							// Checa se o boitata está proximo demais
+							if _MPT_minHeadDistance( px , py ) < 100 then
+								break;
+							end						
+							
 							// Checa se o rendezvous ficou muito caro / ruim / inacessivel
-							newRendezvous = _MPT_isPointClear( xDest , yDest , 5.0 ) - 1; 	
-	
-							// Checa se esta na hora de tentar outro ponto de fulga
-							if newRendezvous then
+							if _MPT_isPointBest( px , py , xDest , yDest , 5.0 ) < 2 then
 								break;
 							end
 						end // Loop de encontrar caminho para o rendezvous
@@ -1304,14 +1405,12 @@ do
 		var int sy = _AST_getCellSize( 2 );
 		
 		every SDL_REDRAW do
-			if pathPtr != 0 then
-				_SDL_SetRenderDrawColor(&&this.ren, 0xFF , 0xFF , 0x00 , 0 );
-				var int size = _AST_TST_GetSize(pathPtr);	
-				loop n in size do					
-					_AST_TST_PathGetCoord( &&x1 , &&y1 , pathPtr , n ) finalize with end;
-					_SDL_RenderDrawLine( &&this.ren ,  x1 , y1+(sy/2) , x1+sx , y1+(sy/2) );
-					_SDL_RenderDrawLine( &&this.ren ,  x1+(sx/2) , y1 , x1+(sx/2) , y1+sy );
-				end
+			_SDL_SetRenderDrawColor(&&this.ren, 0xFF , 0xFF , 0x00 , 0 );
+			var int size = _AST_TST_GetSize(cID);	
+			loop n in size do					
+				_AST_TST_PathGetCoord( &&x1 , &&y1 , cID , n ) finalize with end;
+				_SDL_RenderDrawLine( &&this.ren ,  x1 , y1+(sy/2) , x1+sx , y1+(sy/2) );
+				_SDL_RenderDrawLine( &&this.ren ,  x1+(sx/2) , y1 , x1+(sx/2) , y1+sy );
 			end
 		end
 	#endif	
@@ -1324,11 +1423,10 @@ do
 	end	
 	
 	// Libera memoria do caminho
-	if pathPtr != 0 then
-		_AST_destroyPath( pathPtr );
-	end	
+	_AST_destroyPath( cID );
+	hunterSlots[cID] = 0;
 	
-	#if SFX_ACT == 1
+	#if USE_PARTICLES == 1
 	// Efeito visual da morte
 	if deathType==1 then
 		pool Flame[PARTICLES_PER_ENEMY_PARCEL*5] flamePool;
@@ -1389,6 +1487,9 @@ with
         _SDL_RenderFillRect(&&renderer!, null);
     end
 with
+    // Dados tecnicos
+    var FrameCounter frameCounter;
+    
 	// Configuracoes persistentes
 	var int tempPlayerQTD = 1;
 	var int tempDifficuty = 1;
@@ -1409,16 +1510,16 @@ with
 			this.scoreValues 	= &scoreValues;		
 		end;
 		gameData.totalPlayers 	= tempPlayerQTD;
-		gameData.alivePlayers 	= tempPlayerQTD;
+		gameData.alivePlayers 	= 0;
 		gameData.difficulty 	= tempDifficuty;
 	
 		// Ajuste de dificuldade
 		if tempDifficuty == 1 then
 			gameData.gameSpeed = 150;
-			gameData.enemySpeedScale = 1.3;
+			gameData.enemySpeedScale = 1.4;
 		else/if tempDifficuty == 2 then
 			gameData.gameSpeed = 200;
-			gameData.enemySpeedScale = 1.4;
+			gameData.enemySpeedScale = 1.5;
 		else
 			gameData.gameSpeed = 250;
 			gameData.enemySpeedScale = 1.5;
@@ -1551,6 +1652,7 @@ with
 		var Pathfinder pathfinder with
 			this.ren 		= &renderer!;	
 			this.boitatas 	= &boitatas;
+			this.players 	= gameData.totalPlayers;
 		end;
 
 		// Aguarda uma tecla direcional para começar o jogo
@@ -1589,28 +1691,25 @@ with
 		end	
 
 	
-		//Ciclo de jogo
-		pool Hunter[MAX_HUNTERS] hunters;
-	
+		//Ciclo de jogo	
 		par/or do
 			// Para o ciclo caso todos os boitatas sejam destruidos
-			var int breakFlag = 0;
 			loop do
-				breakFlag = 1;
-				loop btt in boitatas do
-					if btt:alive == 1 then
-						breakFlag = 0;
-					else
-						gameData.alivePlayers = gameData.alivePlayers - 1;
-					end
-				end
-				if breakFlag == 1 then
+				await 500ms;
+				if gameData.alivePlayers < 1 then
 					break;
 				end				
-				await 1s;
 			end 
 		with
-			// Spawna inimigo
+			// Controle de nascimento dos hunters
+			pool Hunter[MAX_HUNTERS] hunters;
+			var int tt = 0;
+			var int[] hunterSlots;	
+			loop i in MAX_HUNTERS do
+				hunterSlots = []..hunterSlots..[0];
+			end
+			
+			
 			loop do
 				await (1000 + (_rand()%3000))ms;
 				// Varia Starting Point para nascer longe do boitata
@@ -1618,25 +1717,22 @@ with
 				var int tDx = 0;
 				var int tDy = 0;
 				var int tDist = 0;
+				startPos	= Vetor2D( (50 + (_rand()%((WIN_W/1000)-100)))*1000 , (50 + (_rand()%((WIN_H/1000)-100)))*1000 );
 				loop do
-					startPos	= Vetor2D( (50 + (_rand()%((WIN_W/1000)-100)))*1000 , (50 + (_rand()%((WIN_H/1000)-100)))*1000 );
-					var int breakFlag = 1;
-					loop btt in boitatas do
-						tDx = startPos.x - btt:getHeadCircloid().center.x;
-						tDy = startPos.y - btt:getHeadCircloid().center.y;		
-						tDist = _sqrt( _pow( tDx , 2 ) + _pow( tDy , 2 ) );
-					
-						if tDist < 200  then
-							if breakFlag == 1 then
-								breakFlag = 0;
-							end
-						end
-					
-					end
-					if breakFlag == 1 then
+				
+					if _MPT_minHeadDistance( startPos.x , startPos.y ) > 150 then
 						break;
-					end				
-	
+					end 
+					
+					startPos.x = startPos.x + 50;
+					startPos.y = startPos.y + 50;
+					
+					if startPos.x < 50 then startPos.x = (WIN_W/1000) - 50;
+					else/if startPos.x > ((WIN_W/1000) - 50) then startPos.x = 50; end
+					
+					if startPos.y < 50 then startPos.y = (WIN_H/1000) - 50;
+					else/if startPos.y > ((WIN_H/1000) - 50) then startPos.y = 50; end					
+							
 					await 10ms;
 				end		
 		
@@ -1649,6 +1745,7 @@ with
 						this.pathfinder 	= &pathfinder;
 						this.ren 			= &renderer!;
 						this.startPos 		= startPos;
+						this.hunterSlots	= &hunterSlots;
 					end;
 				#endif		
 			end	

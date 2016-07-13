@@ -1,6 +1,41 @@
 native do
+
+
+
+// Prototypes of Custom Functions and Strucs
+
+// Returns the distance between two points
+float MPT_getDistance( int x1, int y1, int x2, int y2);
+
+// Return the direction ( radians ) of point x1,y1 to point x2,y2
+float MPT_getDirection( int x1, int y1, int x2, int y2);
+
+// Check if a point is no blockend and have a cost less than maxCost
+int MPT_isPointClear(  int x , int y , float maxCost );
+
+// Get unblocked point closest to distance DIST from point x,y in direction sDir
+void MPT_getClearPoint( int* rx , int* ry , int x , int y , int dist , float sDir , float maxCost , int i );
+
+// A partir das coordenadas X , Y, um caminho e a ultima posicao no caminho; descobre a direcao para chegar na proxima posicao.
+// Retorna 0 caso ja esteja na proxima posicao
+// Retorna 1 caso contrario, e muda (*direction) para a direcao correta
+int MPT_nextDirection( float* direction , int x , int y , int id , int pathIndex );
+
+// Retorna tamanho do caminho
+int AST_getPathSize( int id );
+
+// Destroi Caminho
+void AST_destroyPath( int id );
+
+// Cria caminho do ponto A ( x1 , y1 ) ao ponto B ( x2 , y2 )
+void AST_findPath( int id , int x1 , int y1, int x2 , int y2 );
+
+
 	
-// Prototypes
+	
+	
+	
+// Prototypes of Vanilla AStar
 
 
 
@@ -40,7 +75,7 @@ void *ASPathGetNode(ASPath path, size_t index);
 
 
 
-// C code
+// Implementation
 
 
 
@@ -548,7 +583,7 @@ void *ASPathGetNode(ASPath path, size_t index)
 
 
 
-// Psyny Functions ---------------------------------------------
+// Custom Functions and Structs---------------------------------------------
 
 
 
@@ -580,10 +615,23 @@ typedef struct nodeAS {
 	int y;
 } NodeAS;
 
+typedef struct head {
+	int x;
+	int y;
+	int active;
+} Head;
+
 // Global Grid
 static Grid* grid;
 
-// Start Grid
+// Global Path List
+ASPath* pathList;
+
+// Global Boitata Head Positions
+static Head* headPositions;
+static int headPositionsMax;
+
+// Initialize Grid
 void AST_initGrid( int rows , int cols , int fieldSizeX , int fieldSizeY ) {
 	int i,j;
 	
@@ -610,7 +658,41 @@ void AST_initGrid( int rows , int cols , int fieldSizeX , int fieldSizeY ) {
 	}	
 }
 
-// Resert isBlocked status to zero for all grid
+
+// Initialize pathList
+void AST_initPathList( int slots ) {
+	int i = 0;
+	pathList = (ASPath) malloc(sizeof(ASPath) * slots );
+	
+	for( i = 0 ; i < slots ; i++ ) {
+		pathList[i] = 0;
+	}
+}
+
+
+// Initialize Head Position List
+void AST_initHeadPositions( int headQTD ) {
+	int i = 0;
+	headPositions = (Head*) malloc( sizeof(Head) * headQTD );
+	
+	headPositionsMax = headQTD;
+	for( i = 0 ; i < headQTD ; i++ ) {
+		headPositions[i].x = 0;
+		headPositions[i].y = 0;
+		headPositions[i].active = 0;
+	}
+}
+
+
+// Set Head Position
+void AST_setHeadPosition( int id , int x , int y , int active ) {
+	headPositions[id].x = x;
+	headPositions[id].y = y;
+	headPositions[id].active = active;
+}
+
+
+// Resert isBlocked status to zero for all cells in the grid
 void AST_zeroGrid( void ) {
 	int i , j;
 	for( i = 0 ; i < grid->rowQty ; i++ ) {
@@ -889,7 +971,7 @@ void AST_addCostLine( int x1 , int y1 , int x2 , int y2 , float cost ) {
 
 }
 
-// Essenciais para o funcionamento do AStar ( customizadas )
+// Definições essenciais para o funcionamento do AStar original ( como baixado )
 
 // Set Neighbors
 static void AST_neighbors( ASNeighborList neighbors , void *node , void *context ) {
@@ -898,6 +980,7 @@ static void AST_neighbors( ASNeighborList neighbors , void *node , void *context
 	
 	int tx , ty;
 	float cost;
+	float tempDir;
 	
 	for( tx = nodeAS->x -1 ; tx <= nodeAS->x + 1 ; tx++ ) {
 		for( ty = nodeAS->y -1 ; ty <= nodeAS->y + 1 ; ty++ ) {
@@ -920,12 +1003,12 @@ static void AST_neighbors( ASNeighborList neighbors , void *node , void *context
 				
 				
 				// Custo de para se mover na diagonal é diferente do que na ortogonal
-				// Evita que o A* tente "contornar" os obstaculos
+				// Objetivo: Evitar que o A* tente "contornar" os obstaculos
 				if( tx == nodeAS->x || ty == nodeAS->y )
 					cost = cost * 1.0;
 				else
-					cost = cost * 1.5;
-				
+					cost = cost * 1.4142; // Raiz de 2
+					
 				ASNeighborListAdd( neighbors , newNodeAS , cost );					
 			}
 			
@@ -939,11 +1022,11 @@ static float AST_heuristic( void* fromNode , void* toNode , void *context) {
 	NodeAS *to = (NodeAS*)toNode;
 	
 	int dx , dy;
-	
+
 	dx = from->x - to->x;
 	dy = from->y - to->y;
-	
-	return sqrt( pow(dx , 2) + pow(dy , 2) );	
+
+	return sqrt( pow(dx , 2) + pow(dy , 2) );
 }
 
 // Informacao do No
@@ -985,7 +1068,37 @@ float MPT_getDirection( int x1, int y1, int x2, int y2) {
 	return direction;
 }
 
-// Check if a point is good enought
+// Returns the distance between two points
+float MPT_getDistance( int x1, int y1, int x2, int y2) {
+	int dx , dy;
+	
+	dx = (x2 - x1);
+	dy = (y2 - y1);
+		
+	return ( sqrt( pow(dx,2) + pow(dy,2) ) );
+}
+
+// Return the minium distance of a head to x,y
+int MPT_minHeadDistance( int x , int y ) {
+	unsigned int min = -1;
+	int tDist;
+	int i;
+
+	//return 999999;
+
+	for( i = 0 ; i < headPositionsMax ; i++ ) {
+		if( headPositions[i].active ) {
+			tDist = MPT_getDistance( x , y , headPositions[i].x , headPositions[i].y );
+			if( tDist < min ) {
+				min = tDist;
+			}	
+		}				
+	}
+	
+	return min;
+}
+
+// Check if a point is not blocked and have a cost less than maxCost
 int MPT_isPointClear(  int x , int y , float maxCost ) {
 	int col , row;
 	
@@ -1000,41 +1113,94 @@ int MPT_isPointClear(  int x , int y , float maxCost ) {
 	}
 }
 
+// Check if a point x1,y1 is closest to x2,y2 than any head
+// return:
+// 0: point is blocked
+// 1: point is reachable, but a head is closer
+// 2: point is reachable, and is closest
+int MPT_isPointBest(  int x1 , int y1 , int x2 , int y2 , float maxCost ) {
+	int advantageFlag;
+	int i;
+
+	if ( MPT_isPointClear( x2 , y2 , maxCost ) ) {
+		advantageFlag = 1;
+		for( i = 0 ; i < headPositionsMax ; i++ ) {
+			if( headPositions[i].active ) {
+				if( MPT_getDistance( x2 , y2 , headPositions[i].x , headPositions[i].y )
+				< MPT_getDistance( x2 , y2 , x1 , y1 ) ) {
+					advantageFlag = 0;
+					break;
+				}	
+			}				
+		}
+		
+		if ( advantageFlag == 1 )
+			return 2;
+		else
+			return 1;	
+	}
+	
+	return 0;
+}
+
 // Get unblocked point closest to distance DIST from point x,y in direction sDir
-void MPT_getClearPoint( int* rx , int* ry , int x , int y , int dist , float sDir , float maxCost ) {
+void MPT_getClearPoint( int* rx , int* ry , int x , int y , int dist , float sDir , float maxCost , int i ) {
 
 	float angularSeg , tDir;
 	int x2 , y2;
 	int maxDist , minDist , incDist;
-	int stopFlag = 0;
-	int i;
-
-	minDist = dist * 0.7 + 1;
-	maxDist = dist * 1.4 + 1;
-	incDist = dist * 0.2 + 1;
+	int goodFlag = 0;
 	
-	// Tentativa 1 - Procura caminhos a frente
-	dist = maxDist;
-	angularSeg = M_PI / 6;
+	minDist = dist * 0.5 + 1;
+	maxDist = dist * 1.5 + 1;
+	incDist = ( maxDist - minDist ) * 0.2 + 1;
+	
+	// Tentativa 1 - Procura caminhos no contexto
+	angularSeg = M_PI / 12;
 	if (x%2) angularSeg *= -1;
 	
-	while( dist > minDist ) {
-		for( i = -1 ; i < 2 ; i++ ) {
-			tDir = sDir + ( angularSeg * i );
+	while( i <= 9 ) {
+	
+		dist = maxDist;
+		tDir = sDir + ( angularSeg * i );
 		
+		while( dist > minDist ) {
 			x2 = x + ( cos(tDir) * dist );
 			y2 = y + ( sin(tDir) * dist );
 			
-			if ( MPT_isPointClear( x2 , y2 , maxCost ) ) {
-				(*rx) = x2;
-				(*ry) = y2;	
-				return;
+			switch( MPT_isPointBest( x , y , x2 , y2 , maxCost ) ) {
+				case 0:
+				// Unreachable	
+					break;
+				
+				case 1:
+				// Good, but not the best
+					if ( !goodFlag ) {
+						goodFlag = 1;
+						(*rx) = x2;
+						(*ry) = y2;	
+					}
+					break;
+				
+				case 2:
+				// Best
+					(*rx) = x2;
+					(*ry) = y2;	
+					return;
+					break;
 			}
+
+			dist -= incDist;
 		}
 
-		dist -= incDist;
+		if( angularSeg < 0 ) {
+			i++;
+		}
+		angularSeg *= -1;	
 	}
-	
+		
+	if ( goodFlag ) return;
+		
 	// Tentativa 2 - Procura por caminhos proximos ao centro
 	dist = minDist;
 	angularSeg = M_PI / 4;
@@ -1064,9 +1230,8 @@ void MPT_getClearPoint( int* rx , int* ry , int x , int y , int dist , float sDi
 // A partir das coordenadas X , Y, um caminho e a ultima posicao no caminho; descobre a direcao para chegar na proxima posicao.
 // Retorna 0 caso ja esteja na proxima posicao
 // Retorna 1 caso contrario, e muda (*direction) para a direcao correta
-int MPT_nextDirection( float* direction , int x , int y , int pathPtr , int pathIndex ) { 
-	ASPath path = (ASPath)pathPtr;	
-	NodeAS* node = (NodeAS*)ASPathGetNode(path, pathIndex + 1);
+int MPT_nextDirection( float* direction , int x , int y , int id , int pathIndex ) { 
+	NodeAS* node = (NodeAS*)ASPathGetNode( pathList[id] , pathIndex + 1);
 	int col , row;
 	int x2 , y2;	
 	float dir;
@@ -1094,27 +1259,25 @@ int MPT_nextDirection( float* direction , int x , int y , int pathPtr , int path
 
 
 // Retorna tamanho do caminho
-int AST_getPathSize( int pathPtr ) {
-	ASPath path = (ASPath)pathPtr;
-	return ASPathGetCount(path);
+int AST_getPathSize( int id ) {
+	return ASPathGetCount(pathList[id]);
 }
 
 
 // Destroi Caminho
-void AST_destroyPath( int pathPtr ) {
-	ASPath path = (ASPath)pathPtr;
-	ASPathDestroy(path);
+void AST_destroyPath( int id ) {
+	if( !pathList[id] ) return;
+		
+	ASPathDestroy( pathList[id] );
+	pathList[id] = 0;
 }
 
 
 
-
-
 // Cria caminho do ponto A ( x1 , y1 ) ao ponto B ( x2 , y2 )
-int AST_findPath( int x1 , int y1, int x2 , int y2 ) {
+void AST_findPath( int id , int x1 , int y1, int x2 , int y2 ) {
 	int row1 , col1 , row2 , col2;
 	NodeAS from , to;
-	ASPath path;
 		
 	AST_coordToGrid( &col1 , &row1 , x1 , y1 );	
 	AST_coordToGrid( &col2 , &row2 , x2 , y2 );
@@ -1125,23 +1288,23 @@ int AST_findPath( int x1 , int y1, int x2 , int y2 ) {
 	to.x = col2;
 	to.y = row2;
 	
-	path = ASPathCreate( &PathNodeSource , NULL , &from , &to );
-
-	return (int)path;
+	pathList[id] = ASPathCreate( &PathNodeSource , NULL , &from , &to );
 }
 	
 	
 // Testes/DEBUG
-void AST_TST_PathGetCoord( int* x , int *y , int pathPtr , int index ) {
-	ASPath path = (ASPath)pathPtr;
-	NodeAS* node = (NodeAS*)ASPathGetNode(path, index);
+void AST_TST_PathGetCoord( int* x , int *y , int id , int index ) {
+	NodeAS* node = NULL;
+	
+	if( !pathList[id] ) return;
+	
+	node = (NodeAS*)ASPathGetNode( pathList[id] , index);
 	
 	AST_gridToCoord( x , y , node->x , node->y , 0 );
 }
 
-int AST_TST_GetSize( int pathPtr ) {
-	ASPath path = (ASPath)pathPtr;
-	return ASPathGetCount(path);
+int AST_TST_GetSize( int id ) {
+	return ASPathGetCount( pathList[id] );
 }
 
 	
