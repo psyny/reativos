@@ -1,0 +1,359 @@
+/* --------------------------------------------------------------------------
+	Modulo que cuida de desenhar palavras na tela.
+--------------------------------------------------------------------------*/
+
+_SDL_ShowCursor( _SDL_DISABLE );
+
+_TTF_Init();
+	finalize with
+	    _TTF_Quit();
+	end
+
+
+// General Aux Functions
+native do
+	const char* SRC_intToString( int integer ) {
+		char c1[250];
+		char* c2;
+		
+		sprintf( c1 , "%d" , integer );
+
+		c2 = (char*)malloc( sizeof(char) * ( strlen(c1) ) );
+		strcpy( c2 , c1 );
+		
+		return c2;
+	}
+	
+	const char* SRC_floatToString( float number ) {
+		char c1[250];
+		char* c2;
+		
+		sprintf( c1 , "%.3f" , number );
+
+		c2 = (char*)malloc( sizeof(char) * ( strlen(c1) ) );
+		strcpy( c2 , c1 );
+		
+		return c2;
+	}	
+	
+end
+
+// Text that cannot be changed after its creation	
+class SCR_staticText with
+	var _SDL_Renderer& 	ren;
+	
+	var _char&& 	text 		= " ";
+	
+	var _char&& 	fontFile 	= "../Font.ttf";
+	var int 		fontSize 	= 30;	
+	var SDL_Color	fontColor 	= SDL_Color(0xFF, 0xFF, 0xFF, 0xFF);
+	
+	var int			x = 0;
+	var int			y = 0;
+	
+	var int			xAlign = 1;
+	var int			yAlign = 1;
+	
+	var int 		lifeSpan = 0; // MS
+	
+	event void destroy;
+do
+	// Variaveis
+	var SDL_Rect str_r = SDL_Rect( x , y , 1 , 1 );	
+
+	var _TTF_Font&? fnt;	
+	var _SDL_Texture&? str_tex;
+	var _SDL_Surface&? sfc;	
+	
+	finalize
+		fnt = &_TTF_OpenFont( this.fontFile , fontSize );	  
+	with
+		_TTF_CloseFont(&&fnt!);
+	end
+
+	finalize
+		sfc = &_TTF_RenderText_Blended(&&fnt!, this.text , *(_SDL_Color&&)&&fontColor );
+	with
+		_SDL_FreeSurface(&&sfc!);
+	end
+
+
+	finalize
+		str_tex = &_SDL_CreateTextureFromSurface(&&ren, &&sfc!);
+	with
+		_SDL_DestroyTexture(&&str_tex!);
+	end
+
+	// Posicao e tamanho do retangulo
+	str_r.x = this.x;
+	str_r.y = this.y;
+	str_r.w = (sfc!).w;
+	str_r.h = (sfc!).h;
+			
+	if xAlign == 0 then
+		str_r.x = str_r.x - ( str_r.w / 2 );
+	else/if xAlign < 0 then
+		str_r.x = str_r.x - ( str_r.w );
+	end
+	
+	if yAlign == 0 then
+		str_r.y = str_r.y - ( str_r.h / 2 );
+	else/if yAlign < 0 then
+		str_r.y = str_r.y - ( str_r.h );
+	end
+	
+			
+	// Loop persistente
+	par/or do
+		every SDL_REDRAW do
+			_SDL_RenderCopy(&&this.ren, &&str_tex!, null, (_SDL_Rect&&)&&str_r);
+		end
+	with
+		if lifeSpan > 0 then
+			await (lifeSpan)ms;
+		else
+			await FOREVER;
+		end			
+	with
+		await this.destroy;
+	end	
+end	
+
+
+
+
+
+
+
+// Text with changeable properties after its creation
+native do
+	typedef struct src_textData {
+		char* 		text;
+		int 		length;
+		char*		fontFile;
+		int			fontSize;	
+	} SRC_textData;
+	
+	int SRC_createTextData( char* text , char* fontFile , int fontSize ) {
+		SRC_textData* 	newTextData;
+		
+		newTextData = (SRC_textData*) malloc( sizeof(SRC_textData) );
+		
+		newTextData->length = strlen(text) + 1;
+		
+		newTextData->text = (char*) malloc( sizeof(char) * ( newTextData->length ) );
+		strcpy( newTextData->text , text );
+		
+		newTextData->fontFile = (char*) malloc( sizeof(char) * ( strlen(fontFile) + 1 ) );
+		strcpy( newTextData->fontFile , fontFile );
+		
+		newTextData->fontSize = fontSize;
+		
+		return (int)newTextData;
+	}
+	
+	void SRC_destroyTextData( int ptr ) {
+		SRC_textData* 	textData = (SRC_textData*)ptr;
+	
+		free(textData->fontFile);
+		free(textData->text);
+		free(textData);
+	}
+	
+	char* SRC_getFontFile( int ptr ) {
+		SRC_textData* 	textData = (SRC_textData*)ptr;
+		
+		return textData->fontFile;
+	}
+	
+	char* SRC_getText( int ptr ) {
+		SRC_textData* 	textData = (SRC_textData*)ptr;
+		
+		return textData->text;
+	}
+	
+	int SRC_getFontSize( int ptr ) {
+		SRC_textData* 	textData = (SRC_textData*)ptr;
+		
+		return textData->fontSize;
+	}
+
+	void SRC_setText( int ptr , char* text ) {
+		SRC_textData* 	textData = (SRC_textData*)ptr;
+		
+		textData->length = strlen(text) + 1;
+		
+		free(textData->text);
+		textData->text = (char*) malloc( sizeof(char) * ( textData->length ) );
+		strcpy( textData->text , text );
+	}
+
+	void SRC_setFontFile( int ptr , char* fontFile ) {
+		SRC_textData* 	textData = (SRC_textData*)ptr;
+		
+		free(textData->fontFile);
+		textData->fontFile = (char*) malloc( sizeof(char) * ( strlen(fontFile) + 1 ) );
+	}
+		
+	void SRC_setFontSize( int ptr , int size ) {
+		SRC_textData* 	textData = (SRC_textData*)ptr;
+		
+		textData->fontSize = size;
+	}	
+	
+end
+
+
+class SCR_text with
+	var _SDL_Renderer& 	ren;
+	
+	var SDL_Color	fontColor = SDL_Color(0xFF, 0xFF, 0xFF, 0xFF);
+	var int			x = 0;
+	var int			y = 0;
+	
+	var int			xAlign = 0;
+	var int			yAlign = 0;	
+	
+	// TODO: How to protect these two variables from external updates?
+	var int 		fontStructPTR 		= 0;
+	var int			refreshFlag 		= 0;
+	var int			initializedFlag 	= 0;
+
+	function ( _SDL_Renderer& ren , _char&& text , _char&& fontFile , int fontSize , SDL_Color fontColor , int x , int y , int ax , int ay )=>SCR_text build;
+	function ( _char&& text )=>void setText;
+	function ( _char&& fontFile )=>void setFont;
+	function ( int newSize )=>void setFontSize;
+	function ( SDL_Color tColor )=>void setFontColor;			
+	function ( int x , int y )=>void setPosition;	
+	
+	function ( _char&& text , _char&& fontFile , int fontSize , SDL_Color fontColor , int x , int y , int ax , int ay )=>void init;		
+	
+	event void destroy;
+do	
+	function ( _char&& text , _char&& fontFile , int fontSize , SDL_Color fontColor , int x , int y , int ax , int ay )=>void init do
+		this.x 			= x;
+		this.y			= y;
+		this.xAlign		= ax;
+		this.yAlign		= ay;
+		this.fontColor 	= fontColor;
+		
+		this.initializedFlag = 1;
+		
+		this.fontStructPTR = _SRC_createTextData( text , fontFile , fontSize);
+	end	
+	
+	function ( _SDL_Renderer& ren , _char&& text , _char&& fontFile , int fontSize , SDL_Color fontColor , int x , int y , int ax , int ay )=>SCR_text build do
+		this.ren 		= &ren;		
+		this.init(text , fontFile , fontSize , fontColor , x , y , ax , ay );
+	end
+	
+	function ( _char&& text )=>void setText do
+		_SRC_setText( fontStructPTR , text );
+		this.refreshFlag = 1;
+	end
+
+	function ( _char&& fontFile )=>void setFont do
+		_SRC_setFontFile( fontStructPTR , fontFile );
+		this.refreshFlag = 1;
+	end	
+
+	function ( int newSize )=>void setFontSize do
+		_SRC_setFontSize( fontStructPTR , newSize );
+		this.refreshFlag = 1;
+	end			
+
+	function ( SDL_Color tColor )=>void setFontColor do
+		this.fontColor = tColor;
+		this.refreshFlag = 1;
+	end			
+	
+	function ( int x , int y )=>void setPosition do
+		this.x = x;
+		this.y = y;
+		this.refreshFlag = 1;
+	end	
+		
+	
+	// Wait for initialization
+	loop do
+		await SDL_REDRAW;
+		if initializedFlag == 1 then
+			break;
+		end
+	end	
+	// Trail finalization instructions
+	finalize with 
+		_SRC_destroyTextData(fontStructPTR);
+	end
+			
+	// Life Loop
+	par/or do
+		loop do
+			// Create the necessary SDL structure to render the font on the screen
+			
+			// Variables
+			var _TTF_Font&? fnt; // Font
+			var _SDL_Surface&? sfc;	// Surfere where the font will be rendered		
+			var _SDL_Texture&? str_tex; // Texture resulting the render of the font
+			var SDL_Rect str_r = SDL_Rect( x , y , 1 , 1 );	// Rectangle to receive the texture ( and threfore be positioned )
+
+			// Creates a font
+			finalize
+				fnt = &_TTF_OpenFont( _SRC_getFontFile(fontStructPTR) , _SRC_getFontSize(fontStructPTR) );	    
+			with
+				_TTF_CloseFont(&&fnt!);
+			end
+
+			// Creates a surface with the text
+			finalize
+				sfc = &_TTF_RenderText_Blended(&&fnt!, _SRC_getText(fontStructPTR) , *(_SDL_Color&&)&&fontColor );
+			with
+				_SDL_FreeSurface(&&sfc!);
+			end
+
+			// Create the texture from the surface
+			finalize
+				str_tex = &_SDL_CreateTextureFromSurface(&&ren, &&sfc!);
+			with
+				_SDL_DestroyTexture(&&str_tex!);
+			end
+
+			// Adjust the rectangle to the surface size and desired alignment
+			str_r.x = this.x;
+			str_r.y = this.y;
+			str_r.w = (sfc!).w;
+			str_r.h = (sfc!).h;
+			
+			if xAlign == 0 then
+				str_r.x = str_r.x - ( str_r.w / 2 );
+			else/if xAlign < 0 then
+				str_r.x = str_r.x - ( str_r.w );
+			end
+	
+			if yAlign == 0 then
+				str_r.y = str_r.y - ( str_r.h / 2 );
+			else/if yAlign < 0 then
+				str_r.y = str_r.y - ( str_r.h );
+			end
+			
+			// Signals that this font is not need to be recalculated
+			this.refreshFlag = 0;
+	
+			// Main loop
+			loop do
+				await SDL_REDRAW;
+				_SDL_RenderCopy(&&this.ren, &&str_tex!, null, (_SDL_Rect&&)&&str_r);
+				if this.refreshFlag == 1 then
+					break;
+				end
+			end
+		end
+	with
+		await this.destroy;
+	end	
+	
+end
+
+
+
+

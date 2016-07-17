@@ -1,8 +1,8 @@
 #!/bin/bash
 
-prog="/boitata.ceu"
-
-dir=$(pwd)
+file="/boitata.ceu"
+dir=${PWD}
+home=${HOME}
 
 clear
 
@@ -11,7 +11,8 @@ echo "Compilando todo os arquivos e executando o jogo"
 date
 echo "##############################################"
 
-cd
-cd ceu-sdl
-make ceu SRC=$dir$prog all
+# As duas expressões a seguir são equivalentes, mas a primeira funciona apenas em algumas versões do linux
+#make -C $home/ceu-sdl/ all ceu SRC=$dir$file
+cd $home/ceu-sdl/ && make all ceu SRC=$dir$file
+
 

@@ -66,10 +66,11 @@ do
 			return vet;				
 
 		else/if type == GEO_AREA_CIRCLE then
-			var float flu = (_rand()%((int)(2000 * PI )))/1000.0;
+			var float flu 	= (_rand()%((int)(2000 * PI )))/1000.0;
 			var Vetor2D vet = Vetor2D( center.x , center.y );
-			vet.x = vet.x + ( attribute1 * _cos(flu) );
-			vet.y = vet.y + ( attribute1 * _sin(flu) );
+			var int   rad 	= (_rand()%attribute1) + 1;
+			vet.x = vet.x + ( rad * _cos(flu) );
+			vet.y = vet.y + ( rad * _sin(flu) );
 			return vet;		
 			
 		else

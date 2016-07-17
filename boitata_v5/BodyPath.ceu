@@ -3,7 +3,7 @@ native do
 	typedef struct pathNode { 
 		int x;
 		int y;
-		int d; // Para os não vice é a distancia até o vice. Para o vice é a distancia até o finish.
+		float d; // Para os não vice é a distancia até o vice. Para o vice é a distancia até o finish.
 		struct pathNode* next;
 	} PathNode;
 
@@ -93,8 +93,9 @@ native do
 
 	// Atualiza o node no final e o vice(reflexo da alteracao do finish)
 	void BPT_updateFinish( int player , int x , int y ) {
-		int dist, dx, dy;
-	
+		int dx, dy;
+		float dist;
+		
 		Path* path = playerPath[player-0];
 	
 		path->finish->x = x;
@@ -125,6 +126,12 @@ native do
 		(*x) = tNode->x;
 		(*y) = tNode->y;
 	}
+	
+	// Retorna a distancia entre o vice e o finish
+	int BPT_getViceNodeD( int player ) {
+		Path* path = playerPath[player-0];
+		return (path->vice->d);
+	}		
 
 	// Debug, imprime cadeia de nos
 	void BPT_printChain( int player ) {
@@ -151,10 +158,17 @@ native do
 	// Adiciona um nó vice que é uma copia do finish	
 	void BPT_addViceNode( int player ) {
 		PathNode* newNode;
-		int dist, dx, dy;
-	
+		int dx, dy;
+		float dist;
+		
 		Path* path = playerPath[player-0];
+		
+		// Evita criar um nó redundante
+		//if ( ( path->finish->x ==  path->vice->x ) && ( path->finish->y ==  path->vice->y ) ) {
+		//	return;
+		//}
 	
+		// Aloca espaço
 		newNode = (PathNode*) malloc(sizeof(PathNode));
 	
 		newNode->x = path->finish->x;
@@ -188,9 +202,12 @@ native do
 
 	// Muda *x e *y para as novas coordenas partindo de um no "move" dentro deste no
 	// NAO CHECA SE A DISTANCIA ULTRAPASSARA A POSICAO DO PROXIMO NODE
-	void BPT_moveInNode( PathNode* node , int move , int* x , int* y ) {
-		int dist , dx , dy;
+	// Retorna quanto ele andou
+	float BPT_moveInNode( PathNode* node , int speed , int* x , int* y ) {
+		int dx , dy;
+		float dist;
 		float proportion;
+		float move = speed;
 
 		dx = (node->next->x) - (*x);
 		dy = (node->next->y) - (*y);	
@@ -201,14 +218,16 @@ native do
 		(*x) = (*x) + ( dx * proportion );
 		(*y) = (*y) + ( dy * proportion );	
 			
-		return;
+		return (dist*proportion);
 	}	
 
 	// Muda *x e *y para as novas coordenas partindo de um no e andando "move" no caminho
 	// Mantem uma distancia minDist da chegada.
-	int BPT_moveInPath( int player , int* node , int move , int* x , int* y , int minDistToFinish ) {
-		int dist , dx , dy;
-		int distToFinish;
+	float BPT_moveInPath( int player , int* node , int speed , int* x , int* y , int minDistToFinish ) {
+		int dx , dy;
+		float dist;
+		float distToFinish;
+		float move;
 		PathNode* tempNode;	
 	
 		Path* path = playerPath[player-0];
@@ -216,7 +235,7 @@ native do
 		tempNode = (PathNode*)(*node);
 		if( !( tempNode->next ) ) return; // Teoricamente não pode acontecer
 	
-		move = 2.5 * move / 1000;	
+		move = 2.5 * speed / 1000;	
 		dx = (tempNode->next->x) - (*x);
 		dy = (tempNode->next->y) - (*y);	
 		dist = sqrt( pow(dx , 2) + pow(dy , 2) );
@@ -227,7 +246,7 @@ native do
 				distToFinish += tempNode->next->d;
 			}
 		} 
-		if( distToFinish < minDistToFinish ) return;
+		if( distToFinish < minDistToFinish ) return distToFinish;
 
 		
 		while(1) {			
@@ -240,8 +259,7 @@ native do
 			//Se o move for menor que a distancia para o proximo no, nao muda o no
 			if( move < dist ) {
 				(*node) = tempNode;
-				BPT_moveInNode( tempNode , move , x , y );
-				return distToFinish;
+				return (distToFinish - BPT_moveInNode( tempNode , move , x , y ));
 			}
 			
 			//Move é maior do q a distancia para o proximo no, muda para o proximo no
@@ -261,8 +279,7 @@ native do
 					(*node) = tempNode;
 					(*x) = tempNode->x;
 					(*y) = tempNode->y;
-					BPT_moveInNode( tempNode , ( tempNode->d ) , x , y );
-					return distToFinish;				
+					return (distToFinish - BPT_moveInNode( tempNode , move , x , y ));				
 				}	
 			}					
 		}

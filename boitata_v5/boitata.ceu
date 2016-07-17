@@ -4,7 +4,7 @@
 #define USE_THREAD 0
 #define	USE_PARTICLES 1
 #define SHOW_FPS 0
-#define TEXT_ACT 0
+#define USER_INTERFACE 1
 
 #define SPEED 150
 #define MAX_HUNTERS 5
@@ -65,6 +65,15 @@ native do
 end
 
 
+// Configuracoes da partida
+var int tempPlayerQTD = 1;
+var int tempDifficuty = 1;
+var int gameSet		  = 0;
+var int[4] totalScoreValues 	= [0,0,0,0];
+var int[4] totalScoreHunters 	= [0,0,0,0];	
+#if USER_INTERFACE == 0 
+	_COM_askPlayersQty( &&tempPlayerQTD , &&tempDifficuty ) finalize with end; 
+#endif
 
 
 // Janela e Render
@@ -75,53 +84,24 @@ input _SDL_KeyboardEvent&& SDL_KEYDOWN;
 input _SDL_KeyboardEvent&& SDL_KEYUP;
 input _SDL_MouseButtonEvent&& SDL_MOUSEBUTTONDOWN;
 
+var _SDL_Renderer&? renderer;
+
+#if USER_INTERFACE == 0
 var _SDL_Window&? window;
     finalize
         window = &_SDL_CreateWindow("Boitata", _SDL_WINDOWPOS_UNDEFINED, _SDL_WINDOWPOS_UNDEFINED, WIN_W/1000 , WIN_H/1000 , _SDL_WINDOW_SHOWN);
     with
         _SDL_DestroyWindow(&&window!);
     end
-
-var _SDL_Renderer&? renderer;
     finalize
         renderer = &_SDL_CreateRenderer(&&window!, -1, 0);
     with
         _SDL_DestroyRenderer(&&renderer!);
     end
-    
-#if TEXT_ACT == 1    
-// TEXTO ( WIP )
-_SDL_ShowCursor( _SDL_DISABLE );
-
-_TTF_Init();
-    finalize with
-        _TTF_Quit();
-    end
-
-var _TTF_Font&? fnt;
-    finalize
-        fnt = &_TTF_OpenFont("Deutsch.ttf", 40);
-    with
-        _TTF_CloseFont(&&fnt!);
-    end
-
-var _SDL_Texture&? str_tex;
-var SDL_Rect str_r = SDL_Rect(10,10, 200,20);
-do
-    var SDL_Color clr = SDL_Color(0xFF, 0x00, 0x00, 0xFF);
-    var _SDL_Surface&? sfc;
-    finalize
-        sfc = &_TTF_RenderText_Blended(&&fnt!, "Hello world!", 
-                                                        *(_SDL_Color&&)&&clr);
-    with
-        _SDL_FreeSurface(&&sfc!);
-    end
-    finalize
-        str_tex = &_SDL_CreateTextureFromSurface(&&renderer, &&sfc!);
-    with
-        _SDL_DestroyTexture(&&str_tex!);
-    end
-end 
+#else
+	// User Interface ( WIP )
+	var SDL sdl = SDL.build(_SDL_INIT_EVERYTHING, WIN_W/1000 , WIN_H/1000 , "Boitata");
+	renderer = &sdl.ren;
 #endif
 
 // Geometry and Physics
@@ -129,6 +109,9 @@ end
 
 // Special Effects
 #include "sfx.ceu"
+
+// Text Scribbler
+#include "scribbler.ceu"	
 
 // Contador de quadros
 class FrameCounter with
@@ -151,7 +134,7 @@ do
     end
 end 
 
-// Organismo que controla os daods do jogo
+// Organismo que controla os dados do jogo
 class GameData with
  	var int totalPlayers 	= 1;
  	var int	alivePlayers 	= 1;
@@ -164,6 +147,16 @@ class GameData with
 	
 	event void destroy;
 do
+	// Ajuste de dificuldade
+
+	this.gameSpeed = 150 + ( ( (int)( ( difficulty - 0.1 ) / 2 ) ) * 50 );
+	
+	if difficulty%2 == 1 then
+		this.enemySpeedScale = 1.4;
+	else
+		this.enemySpeedScale = 1.5;
+	end
+		
 	await this.destroy;
 end
 
@@ -171,36 +164,103 @@ end
 class AnyKeyContinue with
 	event void pressed;
 do
-	par/or do	  
-			var _SDL_KeyboardEvent&& key;      
-    		key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_LEFT;
-		with
-			var _SDL_KeyboardEvent&& key;
-			key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_RIGHT;
-		with
-			var _SDL_KeyboardEvent&& key;
-			key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_DOWN;
-		with
-			var _SDL_KeyboardEvent&& key;
-			key = await SDL_KEYDOWN until key:keysym.sym==_SDLK_UP;									
-	end
-	
+	var _SDL_KeyboardEvent&& key;      
+	key = await SDL_KEYUP;
+
 	emit this.pressed;
 end
 
+// Controle de menu de selecao
+class MenuControls with
+	var int selected 	= 0;
+	var int maxOptions	= 2;
+	
+	var int direction = 0;
+	var int circle = 0;
+	
+	event void changed;
+	event void confirmed;
+	event void destroy;
+do
+	var int keyNext = 0;
+	var int keyPrev = 0;
+	
+	if direction == 0 then
+		keyNext = _SDLK_RIGHT;
+		keyPrev = _SDLK_LEFT;
+	else
+		keyNext = _SDLK_UP;
+		keyPrev = _SDLK_DOWN;	
+	end
+	
+	par/or do
+		loop do
+			// Pressiona tecla
+		    par/or do
+		    	var _SDL_KeyboardEvent&& key;
+		    	key = await SDL_KEYDOWN   until key:keysym.sym==keyNext;
+		    	selected = selected + 1;
+		    	if selected > (maxOptions-1) then
+		    		if circle == 0 then
+		    			selected = (maxOptions-1);
+		    		else
+		    			selected = 0;
+		    		end
+		    	end
+		    	emit this.changed; 	
+		    with
+		    	var _SDL_KeyboardEvent&& key;
+		    	key = await SDL_KEYDOWN   until key:keysym.sym==keyPrev;
+		    	selected = selected - 1;
+		    	if selected < 0 then
+		    		if circle == 0 then
+		    			selected = 0;
+		    		else
+		    			selected = (maxOptions-1);
+		    		end
+		    	end
+		    	emit this.changed;
+		    with
+		    	var _SDL_KeyboardEvent&& key;
+		    	key = await SDL_KEYDOWN   until key:keysym.sym==_SDLK_RETURN;
+		    	emit this.confirmed;
+		    end 
+		    
+		    // Solta tecla
+		    par/or do
+		    	var _SDL_KeyboardEvent&& key;
+		    	key = await SDL_KEYUP   until key:keysym.sym==keyNext;      
+		    with
+		    	var _SDL_KeyboardEvent&& key;
+		    	key = await SDL_KEYUP   until key:keysym.sym==keyPrev;
+		    with
+		    	var _SDL_KeyboardEvent&& key;
+		    	key = await SDL_KEYUP   until key:keysym.sym==_SDLK_RETURN;
+		    end		
+		end	
+	with
+		await this.destroy;
+	end
+end
 
 // Controle do jogador
 class PlayerControls with
 	var GEO_PolarPhysOrganism& character;
 	var int player = 0;
 	
+	var int	defaultRadius = 30;
+	
+	var int confirmFlag = 1;
+	
 	event void enableControl; // Da controle ao jogador
 	event void disableControl; // Retira controle do jogador
 	
-	var int d = 0;
+	event void awaitForConfirm;
+	event void confirmed;
+	
+	event void destroy;
 do
-	var float defaultTurn = 0.005;
-	var float multi = 1.0;
+	var float multi = 1000.0;
 	var int turnDirection = 0;
 	var int pilhaA = 0;
 	var int pilhaB = 0;
@@ -231,95 +291,185 @@ do
 		keyDown = _SDLK_KP_5;	
 	end
 	
-	// Loop funcional
-	loop do
-		await this.enableControl;
-		
-		par/or do
-			// Controle Direcional da Curva: reação quando solta as teclas ESQ ou DIR
-			loop do
-		        par/or do
-		        	var _SDL_KeyboardEvent&& key;
-		        	key = await SDL_KEYUP   until key:keysym.sym==keyLeft;
-		        with
-		        	var _SDL_KeyboardEvent&& key;
-		        	key = await SDL_KEYUP   until key:keysym.sym==keyRight;
-		        end  
-		        pilhaA = pilhaA - 1;
-		        if( pilhaA <= 0 ) then
-		        	pilhaA = 0;
-				    turnDirection = 0;
-				    character.angularVelocity = 0;
-		        end 		
-			end
-		with
-			// Controle Direcional da Curva: reação quando aperta ESQ
-		    finalize with 
-				character.angularVelocity = 0;
-			end
-		    loop do
-		        var _SDL_KeyboardEvent&& key;
-		        key = await SDL_KEYDOWN until key:keysym.sym==keyLeft;
-		        turnDirection = -1;
-		        character.angularVelocity = defaultTurn * turnDirection * multi;
-		        pilhaA = pilhaA + 1;
-		        key = await SDL_KEYUP   until key:keysym.sym==keyLeft;
-		    end
-		with
-			// Controle Direcional da Curva: reação quando aperta DIR
-		    finalize with 
-				character.angularVelocity = 0;
-			end
-		    loop do
-		        var _SDL_KeyboardEvent&& key;
-		        key = await SDL_KEYDOWN until key:keysym.sym==keyRight;
-		        turnDirection = 1;
-		        character.angularVelocity = defaultTurn * turnDirection * multi;
-		        pilhaA = pilhaA + 1;
-		        key = await SDL_KEYUP   until key:keysym.sym==keyRight;
-		    end
-		with
-			// Controle Raio da Curva: reação quando solta as teclas CIMA ou BAIXO
-			loop do
-		        par/or do
-		        	var _SDL_KeyboardEvent&& key;
-		        	key = await SDL_KEYUP   until key:keysym.sym==keyUp;
-		        with
-		        	var _SDL_KeyboardEvent&& key;
-		        	key = await SDL_KEYUP   until key:keysym.sym==keyDown;
-		        end  
-		        pilhaB = pilhaB - 1;
-		        if( pilhaB <= 0 ) then
-		        	pilhaB = 0;
-				    multi = 1.0;
-				    character.angularVelocity = defaultTurn * turnDirection;
-		        end 		
-			end
-		with
-			// Controle Raio da Curva: reação quando aperta CIMA: Diminui raio da Curva
-		    loop do
-		        var _SDL_KeyboardEvent&& key;
-		        key = await SDL_KEYDOWN until key:keysym.sym==keyUp;
-		        multi = 2.0;	        
-		        character.angularVelocity = character.angularVelocity * multi;
-		        key = await SDL_KEYUP   until key:keysym.sym==keyUp;
-		    end     
-		with
-			// Controle Raio da Curva: reação quando aperta BAIXO: Aumenta raio da Curva
-		    loop do
-		        var _SDL_KeyboardEvent&& key;
-		        key = await SDL_KEYDOWN until key:keysym.sym==keyDown;
-		        //_BPT_printChain(1); //DEBUG
-		        multi = 0.5;
-		        character.angularVelocity = character.angularVelocity * multi;
-		        key = await SDL_KEYUP   until key:keysym.sym==keyDown;
-		    end 
-		with
-			await this.disableControl;              
-		end		
+	// Life Loop
+	par/or do
+		loop do
+			par/or do
+				await this.disableControl;  	
+			with		
+				// Controle Direcional da Curva: reação quando solta as teclas ESQ ou DIR
+				loop do
+					par/or do
+						var _SDL_KeyboardEvent&& key;
+						key = await SDL_KEYUP   until key:keysym.sym==keyLeft;
+					with
+						var _SDL_KeyboardEvent&& key;
+						key = await SDL_KEYUP   until key:keysym.sym==keyRight;
+					end  
+					pilhaA = pilhaA - 1;
+					if( pilhaA <= 0 ) then
+						pilhaA = 0;
+						turnDirection = 0;
+						character.angularVelocity = 0;
+					end 		
+				end
+			with
+				// Controle Direcional da Curva: reação quando aperta ESQ
+				finalize with 
+					character.angularVelocity = 0;
+				end
+				loop do
+					var _SDL_KeyboardEvent&& key;
+					key = await SDL_KEYDOWN until key:keysym.sym==keyLeft;
+					turnDirection = -1;
+					character.angularVelocity = ( character.velocityIntensity / ( defaultRadius * multi ) )  * turnDirection;
+					pilhaA = pilhaA + 1;
+					key = await SDL_KEYUP   until key:keysym.sym==keyLeft;
+				end
+			with
+				// Controle Direcional da Curva: reação quando aperta DIR
+				finalize with 
+					character.angularVelocity = 0;
+				end
+				loop do
+					var _SDL_KeyboardEvent&& key;
+					key = await SDL_KEYDOWN until key:keysym.sym==keyRight;
+					turnDirection = 1;
+					character.angularVelocity = ( character.velocityIntensity / ( defaultRadius * multi ) )  * turnDirection;
+					pilhaA = pilhaA + 1;
+					key = await SDL_KEYUP   until key:keysym.sym==keyRight;
+				end
+			with
+				// Controle Raio da Curva: reação quando solta as teclas CIMA ou BAIXO
+				loop do
+					par/or do
+						var _SDL_KeyboardEvent&& key;
+						key = await SDL_KEYUP   until key:keysym.sym==keyUp;
+					with
+						var _SDL_KeyboardEvent&& key;
+						key = await SDL_KEYUP   until key:keysym.sym==keyDown;
+					end  
+					pilhaB = pilhaB - 1;
+					if( pilhaB <= 0 ) then
+						pilhaB = 0;
+						multi = 1000.0;
+						character.angularVelocity = ( character.velocityIntensity / ( defaultRadius * multi ) )  * turnDirection;
+					end 		
+				end
+			with
+				// Controle Raio da Curva: reação quando aperta CIMA: Diminui raio da Curva
+				loop do
+					var _SDL_KeyboardEvent&& key;
+					key = await SDL_KEYDOWN until key:keysym.sym==keyUp;
+					multi = 500.0;	        
+					character.angularVelocity = ( character.velocityIntensity / ( defaultRadius * multi ) )  * turnDirection;
+					key = await SDL_KEYUP   until key:keysym.sym==keyUp;
+				end     
+			with
+				// Controle Raio da Curva: reação quando aperta BAIXO: Aumenta raio da Curva
+				loop do
+					var _SDL_KeyboardEvent&& key;
+					key = await SDL_KEYDOWN until key:keysym.sym==keyDown;
+					//_BPT_printChain(1); //DEBUG
+					multi = 2000.0;
+					character.angularVelocity = ( character.velocityIntensity / ( defaultRadius * multi ) )  * turnDirection;
+					key = await SDL_KEYUP   until key:keysym.sym==keyDown;
+				end             
+			end	
+			
+			await this.enableControl;	
+		end
+	with
+	// Loop de espera de confirmação de uma tecla pressionada
+		loop do
+			// Aguarda confirmação do jogador: Jogador apertar qualquer tecla para resumir o comando
+			await this.awaitForConfirm;
+			confirmFlag = 0;
+			
+			var _SDL_KeyboardEvent&& key;
+			key = await SDL_KEYUP until 
+				( 	key:keysym.sym==keyDown
+				or 	key:keysym.sym==keyUp
+				or 	key:keysym.sym==keyLeft
+				or 	key:keysym.sym==keyRight
+				);
+			confirmFlag = 1;
+			
+			emit this.confirmed;		
+		end
+	with
+	// Monitora hora de destruir o organismo
+		await this.destroy;
 	end
 end
 
+// Organismo que aguarda a confirmação de todos os jogadores
+class AwaitForConfirm with
+	pool PlayerControls[]& 	playerCONs;
+	
+	var int 	disableUntilConfirm		= 1;
+	
+	var int[]	confirmedPlayers;
+	
+	event void allConfirmed;
+	event void destroy;
+do
+	// Captura todos os player controls do pool
+	var PlayerControls&&?[] pcons;
+	loop pcon in playerCONs do
+		confirmedPlayers = []..confirmedPlayers..[0];
+		pcons = []..pcons..[pcon];
+	end		
+	
+	// BUG: Tem q ter esse await para o emit seguinte funcionarem
+	await 1ms; 
+	
+	// Retira controle dos jogadores	
+	if disableUntilConfirm == 1 then		
+		loop i in $pcons do 
+			if pcons[i]? then
+				emit pcons[i]!:disableControl;
+			end
+		end	
+	end
+			
+	// Aguarda por todos os jogadores pressionarem uma tecla
+	loop i in $pcons do 
+		if pcons[i]? then
+			emit pcons[i]!:awaitForConfirm;
+		end
+	end	
+	
+	loop do
+		var int playersConfirmed = $pcons;
+		await SDL_REDRAW;
+		loop i in $pcons do 
+			if pcons[i]? and pcons[i]!:confirmFlag == 1 then
+				playersConfirmed = playersConfirmed - 1;
+				confirmedPlayers[pcons[i]!:player] = 1;
+			end
+		end	
+		
+		if playersConfirmed <= 0 then
+			break;
+		end
+	end	
+	
+	// Confirma 
+	emit this.allConfirmed;
+	
+	// Finaliza
+	await this.destroy;
+	
+	// Devolve controle aos jogadores
+	if disableUntilConfirm == 1 then	
+		loop i in $pcons do 
+			if pcons[i]? then
+				emit pcons[i]!:enableControl;
+			end
+		end
+	end	
+end
   
 // Cabeça do boitata
 /*
@@ -329,7 +479,7 @@ class BoitataHead with
 	var _SDL_Renderer& 			ren;	
 	var GEO_PolarPhysOrganism& 	character;	 
 	
-	var RGBA	color	= RGBA( 0xff , 0xff , 0xff , 0 );
+	var RGBA	color			= RGBA( 0xff , 0xff , 0xff , 0 );
 	
 	function (void)=>GEO_Circloid& getCircloid;
 	
@@ -377,10 +527,13 @@ do
 			_BPT_updateFinish( this.character.player , position.x , position.y );	
 		end
 	with
-		every 100ms do
+	// Criação de nodes
+		loop do
+			await 100ms;
 			_BPT_addViceNode( this.character.player );
 		end
 	with 
+	// Efeitos visuais da morte
 		await dieFX;
 		head.color = CORCAVEIRA2;
 		olhos[0].color = RGBA( 0x00 , 0x00 , 0x00 , 0x00 );	
@@ -407,15 +560,15 @@ class BoitataBody with
 	var RGBA	color		= RGBA(0xFF,0xFF,0xFF,0);
 	var int 	colorStyle	= 1;
 	
-	var int 	headDist 	= 0;
+	var float 	headDist 	= 1;
 	var int		colision	= 1;
 	
 	function (void)=>GEO_Circloid& getCircloid;
 	
 	var WindField&		windField;
-	pool Flame[]& flamePool;
-	pool Spark[]& dimSparkPool;
-	pool Spark[]& brightSparkPool;
+	pool Flame[]& 		flamePool;
+	pool Spark[]& 		dimSparkPool;
+	pool Spark[]& 		brightSparkPool;
 	
 	event void destroy;
 	event void disableFire;
@@ -557,12 +710,14 @@ class Boitata with
 	var int				actualSize		= 0;
 	
 	var int 			alive			= 1;
+	var int				holdForm		= 1;
 	
 	var RGBA			foodColor		= RGBA(0,0,0,0);
 	var int				colorStyle		= 0;	
 	var int				bodyColorStyle	= _rand()%3;
 
 	event void destroy;  
+	event void unholdForm;
 	
 	pool BoitataBody[] bodies;
 	pool Boitata[]& boitatas;
@@ -618,7 +773,19 @@ do
 			foodColor = RGBA( tColor[0] , tColor[1] , tColor[2] , 0x00 );	
 		end
 	end
+
+	// Cabeça do boitata
+	var BoitataHead boitataHead with
+		this.ren 		= &ren;
+		this.character 	= &character;
+		this.color		= foodColor;
+	end;		
 	
+	// Retorna geometria cabeça do boitata
+	function (void)=>GEO_Circloid& getHeadCircloid do
+		return &(boitataHead.getCircloid()); 
+	end;	
+
 	// Deletador de caminho: deleta nodes obsoletos do caminho
 	var BoitataBody pathEraser with
 		this.ren 		= &ren;	
@@ -633,6 +800,11 @@ do
 		this.onFire 	= 0;
 		this.windField		= &windField;
 	end;
+		
+	// Aguarda para formar o corpo
+	if holdForm == 1 then
+		await this.unholdForm;
+	end
 	
 	// Cauda do boitata	
 	var int i = 0;
@@ -651,18 +823,6 @@ do
 		this.color		= foodColor;
 		this.colorStyle	= bodyColorStyle;
 	end;
-	
-	// Cabeça do boitata
-	var BoitataHead boitataHead with
-		this.ren 		= &ren;
-		this.character 	= &character;
-		this.color		= foodColor;
-	end;		
-	
-	// Retorna geometria cabeça do boitata
-	function (void)=>GEO_Circloid& getHeadCircloid do
-		return &(boitataHead.getCircloid()); 
-	end;	
 	
 	// Loop funcional
 	par/or do
@@ -717,16 +877,20 @@ do
 			var _SDL_Rect& headRect = &(boitataHead.getCircloid().colisionBox);	
 			// Checa colisao da cabeca com o resto do corpo	de todos os outros boitatas	
 			var int tempPlayer = 0;
-			var int tempMinHeadDist = this.getHeadCircloid().radius * 3;
+			var int tempAlive = 0;
+			var float tempMinHeadDist = this.getHeadCircloid().radius * 3;
 			loop btt in boitatas do
-				tempPlayer = btt:character.player;						
+				tempPlayer = btt:character.player;		
+				tempAlive = btt:alive;						
 				loop bo in btt:bodies do
 					// Caso: colisão com outros boitatas
-					if tempPlayer != this.character.player then	
-						if _SDL_HasIntersection( &&(bo:getCircloid().colisionBox) , &&(headRect) ) then
-							flagDestroy = 1;
-							break;
-						end	
+					if tempPlayer != this.character.player then
+						if tempAlive == 1 then
+							if _SDL_HasIntersection( &&(bo:getCircloid().colisionBox) , &&(headRect) ) then
+								flagDestroy = 1;
+								break;
+							end	
+						end
 					else
 					// Caso: colisão com sigo mesmo
 						if bo:headDist > tempMinHeadDist
@@ -758,39 +922,44 @@ do
 		end // Every End	
 	with
 		await 1s;
-		await this.destroy;
-		
-		// Pára a cabeça
-		boitataHead.character.velocityIntensity = 0;
-		
-		// Efeitos visuais da morte ( cabeca )
-		emit boitataHead.dieFX;
-		
-		// Destroi Cauda
-		loop i in 4 do
-			emit cauda[i].destroy;
-			await 70ms;
-		end		
-				
-		// Destroi o corpo
-		var BoitataBody&&?[] bds;
-		loop bd in bodies do
-				bds = []..bds..[bd];
-		end		
-		loop i in $bds do 
-			if bds[i]? then
-				emit bds[i]!:destroy;
-			end
-			await 70ms;
-		end					
-				
-		// Declara como morto
-		await 2s;
-		this.alive = 0;
-		gameData.alivePlayers = gameData.alivePlayers - 1;
-		await 3s;
-				
+		await this.destroy;				
 	end // Main Loop End
+	
+	// Destruição do organismo
+	// Pára a cabeça
+	boitataHead.character.velocityIntensity = 0;
+	
+	// Efeitos visuais da morte ( cabeca )
+	emit boitataHead.dieFX;
+	
+	// Destroi Cauda
+	loop i in 4 do
+		emit cauda[i].destroy;
+		await 70ms;
+	end		
+			
+	// Destroi o corpo
+	var BoitataBody&&?[] bds;
+	loop bd in bodies do
+			bds = []..bds..[bd];
+	end		
+	loop i in $bds do 
+		if bds[i]? then
+			emit bds[i]!:destroy;
+		end
+		await 70ms;
+	end				
+	
+	// Destroi cabeça
+	await 500ms;
+	emit boitataHead.getCircloid().destroy;	
+			
+	// Declara como morto
+	this.alive = 0;
+	await 2s;
+	gameData.alivePlayers = gameData.alivePlayers - 1;
+	await 3s;
+			
 end
 
 
@@ -1104,13 +1273,14 @@ do
 			// Colisão com a cabeça dos boitatas / GOL
 			var int flagDestroy = 0;
 			var int playerRef = 0;	
+			var float difficultyBonus =  (gameData.difficulty+1/2.0);
 			loop btt in boitatas do									
 				if 	_SDL_HasIntersection( &&(hunter.colisionBox) , &&(btt:getHeadCircloid().colisionBox) ) then
 					playerRef = btt:character.player;
 					gameData.scoreHunters[playerRef] = gameData.scoreHunters[playerRef] + 1;	
 					if value > 0 then
 						// Comeu hunter bom
-						gameData.scoreValues[playerRef] = gameData.scoreValues[playerRef] + ( 50 * ( gameData.alivePlayers - 1 ) ) + ( value * gameData.alivePlayers * 2 );
+						gameData.scoreValues[playerRef] = gameData.scoreValues[playerRef] + ( difficultyBonus * ( ( ( 50 * ( gameData.alivePlayers - 1 ) ) + (  value  * gameData.alivePlayers * 2 ) ) ) );
 						
 						// Coloracao Especial
 						if btt:colorStyle == 1 then
@@ -1125,7 +1295,7 @@ do
 						btt:targetSize = btt:targetSize + 3;
 					else
 						// Comeu hunter estragado
-						gameData.scoreValues[playerRef] = gameData.scoreValues[playerRef] + ( value * ( gameData.totalPlayers - gameData.alivePlayers + 1 ) * 4 );
+						gameData.scoreValues[playerRef] = gameData.scoreValues[playerRef] + ( difficultyBonus * ( value * ( gameData.totalPlayers - gameData.alivePlayers + 1 ) * 4 ) );
 					end
 					flagDestroy = 1;
 					break;
@@ -1490,13 +1660,127 @@ with
     // Dados tecnicos
     var FrameCounter frameCounter;
     
-	// Configuracoes persistentes
-	var int tempPlayerQTD = 1;
-	var int tempDifficuty = 1;
-	var int gameSet		  = 0;
-	var int[4] totalScoreValues 	= [0,0,0,0];
-	var int[4] totalScoreHunters 	= [0,0,0,0];	
-	_COM_askPlayersQty( &&tempPlayerQTD , &&tempDifficuty ) finalize with end; 
+    #if USER_INTERFACE == 1
+    // UI de configurações do jogo
+    do
+		var SCR_staticText title with
+			this.ren 			= &renderer!;
+			this.text 			= "Boitata";
+			this.fontSize		= 40;
+			this.x				= WIN_W/1000/2;
+			this.y				= 20;
+			this.xAlign			= 0; 
+			this.yAlign			= 1;
+		end;
+		
+		var SCR_staticText labelPlayersTitle with
+			this.ren 			= &renderer!;
+			this.text 			= "Quantidade de Jogadores";
+			this.fontSize		= 30;
+			this.x				= WIN_W/1000/2;
+			this.y				= 100;
+			this.xAlign			= 0; 
+			this.yAlign			= 1;			
+		end;
+		
+		// Menu 1 : Selecao de quantidade de jogadores
+		var SCR_staticText labelPlayersTitle with
+			this.ren 			= &renderer!;
+			this.text 			= "Quantidade de Jogadores";
+			this.fontSize		= 30;
+			this.x				= WIN_W/1000/2;
+			this.y				= 100;
+			this.xAlign			= 0; 
+			this.yAlign			= 1;			
+		end;		
+		
+		var SDL_Color unselectedColor = SDL_Color( 0xAA , 0xAA , 0xAA , 0xFF );
+		var SDL_Color selectedColor = SDL_Color( 0xFF , 0x00 , 0x00 , 0xFF );
+				
+		var int xParcel = WIN_W / 1000 / 4;
+		var int tx = 0;
+		var int ty = labelPlayersTitle.y + 40;
+		
+		var SCR_text[3] playerLabels with
+			this.ren 			= &renderer!;
+		end;
+		loop i in 3 do
+			tx = tx + xParcel;
+			playerLabels[i].init( _SRC_intToString(i+1) , "../Font.ttf" , 30 , unselectedColor , tx , ty , 0 , 1 );	
+		end
+		
+		playerLabels[0].setFontColor(selectedColor);
+	
+		// Menu 2 : Selecao de nivel de dificuldade
+		var SCR_staticText labelDiffTitle with
+			this.ren 			= &renderer!;
+			this.text 			= "Dificuldade";
+			this.fontSize		= 30;
+			this.x				= WIN_W/1000/2;
+			this.y				= 240;
+			this.xAlign			= 0; 
+			this.yAlign			= 1;			
+		end;		
+		
+		unselectedColor = SDL_Color( 0xAA , 0xAA , 0xAA , 0xFF );
+		selectedColor = SDL_Color( 0xFF , 0x00 , 0x00 , 0xFF );
+				
+		xParcel = WIN_W / 1000 / 11;
+		tx = 0;
+		ty = labelDiffTitle.y + 40;
+		
+		var SCR_text[10] diffLabels with
+			this.ren 			= &renderer!;
+		end;
+		loop i in 10 do
+			tx = tx + xParcel;
+			diffLabels[i].init( _SRC_intToString(i+1) , "../Font.ttf" , 30 , unselectedColor , tx , ty , 0 , 1 );	
+		end
+		
+		// Seleção dos menus
+		// Etapa 1: Quantidade de jogadores
+		do
+			var MenuControls menuControls with
+				this.maxOptions = 3;
+				this.circle = 1;
+			end;
+			par/or do
+				loop do
+					var int selected = menuControls.selected;
+					await menuControls.changed;
+					playerLabels[selected].setFontColor(unselectedColor);
+					selected = menuControls.selected;
+					playerLabels[selected].setFontColor(selectedColor);
+				end
+			with
+				await menuControls.confirmed;	
+			end
+			tempPlayerQTD = menuControls.selected + 1;
+		end
+		
+		
+		// Etapa 2: Dificuldade
+		do
+			var MenuControls menuControls with
+				this.maxOptions = 10;
+				this.circle = 1;
+			end;
+			diffLabels[0].setFontColor(selectedColor);
+			par/or do
+				loop do
+					var int selected = menuControls.selected;
+					await menuControls.changed;
+					diffLabels[selected].setFontColor(unselectedColor);
+					selected = menuControls.selected;
+					diffLabels[selected].setFontColor(selectedColor);
+				end
+			with
+				await menuControls.confirmed;	
+			end
+			tempDifficuty = menuControls.selected + 1;
+		end	
+	end    
+	#endif
 	
 	// Loop de partidas
 	loop do
@@ -1507,24 +1791,11 @@ with
 		var int[4] scoreHunters = [0,0,0,0];	
 		var GameData gameData with
 			this.scoreHunters 	= &scoreHunters; 
-			this.scoreValues 	= &scoreValues;		
+			this.scoreValues 	= &scoreValues;	
+			this.totalPlayers 	= tempPlayerQTD;
+			this.alivePlayers 	= 0;
+			this.difficulty 	= tempDifficuty;				
 		end;
-		gameData.totalPlayers 	= tempPlayerQTD;
-		gameData.alivePlayers 	= 0;
-		gameData.difficulty 	= tempDifficuty;
-	
-		// Ajuste de dificuldade
-		if tempDifficuty == 1 then
-			gameData.gameSpeed = 150;
-			gameData.enemySpeedScale = 1.4;
-		else/if tempDifficuty == 2 then
-			gameData.gameSpeed = 200;
-			gameData.enemySpeedScale = 1.5;
-		else
-			gameData.gameSpeed = 250;
-			gameData.enemySpeedScale = 1.5;
-		end
-		await 2s;
 		
 		// Controlador do vento
 		var WindField windField;
@@ -1534,14 +1805,21 @@ with
 		pool PlayerControls[] playerCONs;
 	
 		// TODO: Melhorar com um loop -> nao sei fazer com o loop, problema de escopo.
+		var float createPos_dir 	= ( (_rand()%((int)PI*2000))/1000.0 );
+		var float createPos_inc		= (PI*2) / gameData.totalPlayers;
+		var int   createPos_les		= WIN_H/4;
+		if WIN_W < WIN_H then
+			createPos_les = WIN_H/4;
+		end
+		
 			// Cria Jogador 1
+				createPos_dir = createPos_dir + createPos_inc;
 				var GEO_PolarPhysOrganism playerPO_1 with
-					this.position 			= Vetor2D( WIN_W/4*1 , WIN_H/3 );
-					this.velocityDirection 	= 0;
+					this.position 			= Vetor2D( WIN_W/2 + (_cos(createPos_dir)*createPos_les) , WIN_H/2 + (_sin(createPos_dir)*createPos_les) );
+					this.velocityDirection 	= createPos_dir + (PI/2);
 					this.velocityIntensity 	= gameData.gameSpeed;
 					this.player 			= 0;
 				end;
-	
 			
 				// Inicializa estrutura do caminho
 				_BPT_init( playerPO_1.player , playerPO_1.position.x/1000 , playerPO_1.position.y/1000 );
@@ -1574,9 +1852,10 @@ with
 			
 			
 			// Cria Jogador 2
+				createPos_dir = createPos_dir + createPos_inc;
 				var GEO_PolarPhysOrganism playerPO_2 with
-					this.position			= Vetor2D( WIN_W/4*2 , WIN_H/3 );
-					this.velocityDirection 	= 0;
+					this.position 			= Vetor2D( WIN_W/2 + (_cos(createPos_dir)*createPos_les) , WIN_H/2 + (_sin(createPos_dir)*createPos_les) );
+					this.velocityDirection 	= createPos_dir + (PI/2);
 					this.velocityIntensity 	= gameData.gameSpeed;
 					this.player 			= 1;
 				end;
@@ -1612,9 +1891,10 @@ with
 
 
 			// Cria Jogador 3
+				createPos_dir = createPos_dir + createPos_inc;
 				var GEO_PolarPhysOrganism playerPO_3 with
-					this.position 			= Vetor2D( WIN_W/4*3 , WIN_H/3 );
-					this.velocityDirection 	= 0;
+					this.position 			= Vetor2D( WIN_W/2 + (_cos(createPos_dir)*createPos_les) , WIN_H/2 + (_sin(createPos_dir)*createPos_les) );
+					this.velocityDirection 	= createPos_dir + (PI/2);
 					this.velocityIntensity 	= gameData.gameSpeed;
 					this.player 			= 2;
 				end;
@@ -1653,44 +1933,85 @@ with
 			this.ren 		= &renderer!;	
 			this.boitatas 	= &boitatas;
 			this.players 	= gameData.totalPlayers;
-		end;
+		end;		
 
 		// Aguarda uma tecla direcional para começar o jogo
-		loop btt in boitatas do
-			btt:character.angularVelocity = 0.004;
-			btt:character.velocityIntensity = gameData.gameSpeed/2;
-		end	
-	
-		// Pre Jogo
-		if gameData.totalPlayers == 1 then
-			// Aguarda por qualquer tecla
-			var AnyKeyContinue contKey;
-			await contKey.pressed;	
-		else
-			// Pre Jogo
-			await (3525)ms;
-		end
-	
-		// Seta as configuracoes dos boitatas
-		loop btt in boitatas do
-			btt:character.angularVelocity = 0;
-			btt:character.velocityIntensity = gameData.gameSpeed;
-		end	
+		do
+			var AwaitForConfirm allConfirm with
+				this.playerCONs				= &playerCONs;
+				this.disableUntilConfirm 	= 1;
+			end;
 		
-		await 1ms; // BUG: Tem q ter esse await para o emit seguinte funcionar
-	
-		// Da controle aos jogadores
-		var PlayerControls&&?[] pcons;
-		loop pcon in playerCONs do
-			pcons = []..pcons..[pcon];
-		end		
-		loop i in $pcons do 
-			if pcons[i]? then
-				emit pcons[i]!:enableControl;
+			await 1ms; // Necessário para o passo seguinte
+			var Boitata&&?[] btts;
+			loop btt in boitatas do
+				btts = []..btts..[btt];
+			end	
+
+			loop i in $btts do 
+				if btts[i]? then
+					btts[i]!:character.velocityIntensity = gameData.gameSpeed/4;
+					btts[i]!:character.angularVelocity = ( (gameData.gameSpeed/4.0/1000) / 30.0  );
+				end
+			end	
+										
+			// Libera a criação do corpo dos boitatas conforme os jogadores vão confirmando					
+			par/or do
+				loop do
+					await SDL_DT;
+					loop i in $allConfirm.confirmedPlayers do
+						if allConfirm.confirmedPlayers[i] == 1 then
+							emit btts[i]!:unholdForm;
+						end	
+					end
+				end
+			with
+				await allConfirm.allConfirmed;
+			end		
+			
+			// Libera a criação do corpo de todos os boitatas ( redundancia ao loop anterior )
+			loop i in $btts do 
+				if btts[i]? then
+					emit btts[i]!:unholdForm;
+				end
+			end	
+			
+			// Contagem regressiva para iniciar o jogo
+			var float counter = 2.0;		
+			var SDL_Color tColor = SDL_Color(0xFF,0xFF,0xFF,0xFF);
+			var SCR_text counterDisplay	= SCR_text.build( &renderer! , " " , "../Font.ttf" , 40 , tColor , WIN_W/2000 , WIN_H/2000 , 0 , 0 );
+			loop do
+				await 10ms;
+				if counter <= 0 then
+					break;
+				end
+				counter = counter - 0.010;
+				
+				// Atualiza o Contador
+				counterDisplay.setText(_SRC_floatToString(counter) );
+				counterDisplay.setFontSize( (int)(counter*10 + 10) );	
+				
+				// Aumenta gradativamente velocidade dos boitatas
+				loop i in $btts do 
+					if btts[i]? then
+						btts[i]!:character.velocityIntensity = gameData.gameSpeed / ( 1.0 + ( counter*1.5 ) );
+						btts[i]!:character.angularVelocity = ( ( btts[i]!:character.velocityIntensity / 1000.0 ) / 30.0  );
+					end
+				end	
 			end
+		
+			// Destroi o allConfirm ( automaticamente libera controle aos jogadores )
+			emit allConfirm.destroy;
+		
+			// Seta as configuracoes dos boitatas
+			loop i in $btts do 
+				if btts[i]? then
+					btts[i]!:character.velocityIntensity = gameData.gameSpeed;
+					btts[i]!:character.angularVelocity = 0;
+				end
+			end	
 		end	
 
-	
 		//Ciclo de jogo	
 		par/or do
 			// Para o ciclo caso todos os boitatas sejam destruidos
@@ -1711,7 +2032,6 @@ with
 			
 			
 			loop do
-				await (1000 + (_rand()%3000))ms;
 				// Varia Starting Point para nascer longe do boitata
 				var Vetor2D		startPos = Vetor2D( 0 , 0 );
 				var int tDx = 0;
@@ -1720,7 +2040,7 @@ with
 				startPos	= Vetor2D( (50 + (_rand()%((WIN_W/1000)-100)))*1000 , (50 + (_rand()%((WIN_H/1000)-100)))*1000 );
 				loop do
 				
-					if _MPT_minHeadDistance( startPos.x , startPos.y ) > 150 then
+					if _MPT_minHeadDistance( startPos.x , startPos.y ) > 200 then
 						break;
 					end 
 					
@@ -1735,7 +2055,7 @@ with
 							
 					await 10ms;
 				end		
-		
+				
 				#if DEBUG_LV <= 1
 					spawn Hunter in hunters with
 						this.boitatas 		= &boitatas;
@@ -1747,7 +2067,9 @@ with
 						this.startPos 		= startPos;
 						this.hunterSlots	= &hunterSlots;
 					end;
-				#endif		
+				#endif	
+				
+				await (1000 + (_rand()%3000))ms;	
 			end	
 		end
 	
@@ -1799,20 +2121,150 @@ with
 			end
 		end
 		_printf("\n\tLIDER: JOGADOR %d\n",(vencedor+1));
-						
-	
-		// Aguarda um botão direcional para reiniciar uma partida
+		
+		#if USER_INTERFACE == 1
+		// Exibe o placar em tela
+		var int bx = 0;
+		var int by = 20;
+		var int xParcel = WIN_W/1000/10;
+		var int tx = 0;
+		var int ty = 70;
+		var int tFontSize = 15;
+		
+				
+		var SCR_staticText title with
+			this.ren 			= &renderer!;
+			this.text 			= "Partida: ";
+			this.fontSize		= 30;
+			this.x				= xParcel*6;
+			this.y				= by;
+			this.xAlign			= -1; 
+			this.yAlign			= 1;
+		end;
+
+		var SCR_text gameSetCounter = SCR_text.build( &renderer! , _SRC_intToString(gameSet) , "../Font.ttf" , 30 , title.fontColor , title.x , title.y , 1 , 1 );	
+		
+		bx = 0;
+		ty = 50;
+		xParcel = ( (WIN_W/1000) - bx ) / 9;
+		var int[4] px;
+		px = []..px..[bx + ( xParcel * 1.0 )];
+		px = []..px..[bx + ( xParcel * 2.7 )];
+		px = []..px..[bx + ( xParcel * 4.5 )];
+		px = []..px..[bx + ( xParcel * 7.0 )];
+		
+		var SCR_staticText headerJogador with
+			this.ren 			= &renderer!;
+			this.text 			= "Jogador";
+			this.fontSize		= tFontSize;
+			this.x				= px[0];
+			this.y				= title.y + ty;
+			this.xAlign			= 0; 
+			this.yAlign			= 1;
+		end;
+		
+		var SCR_staticText headerHunters1 with
+			this.ren 			= &renderer!;
+			this.text 			= "Inimigos";
+			this.fontSize		= tFontSize;
+			this.x				= px[1];
+			this.y				= title.y + ty;
+			this.xAlign			= 0; 
+			this.yAlign			= 1;
+		end;					
+		var SCR_staticText headerHunters2 with
+			this.ren 			= &renderer!;
+			this.text 			= "Devorados";
+			this.fontSize		= tFontSize;
+			this.x				= headerHunters1.x;
+			this.y				= headerHunters1.y + 20;
+			this.xAlign			= 0; 
+			this.yAlign			= 1;
+		end;
+		
+		var SCR_staticText headerPontuacao with
+			this.ren 			= &renderer!;
+			this.text 			= "Pontos";
+			this.fontSize		= tFontSize + 5;
+			this.x				= bx + ( xParcel * 5.75 );
+			this.y				= title.y + ty;
+			this.xAlign			= 0; 
+			this.yAlign			= 1;
+		end;
+		var SCR_staticText headerPontuacaoPartida1 with
+			this.ren 			= &renderer!;
+			this.text 			= "Partida";
+			this.fontSize		= tFontSize;
+			this.x				= px[2];
+			this.y				= headerPontuacao.y + 20;
+			this.xAlign			= 0; 
+			this.yAlign			= 1;
+		end;
+							
+		var SCR_staticText headerPontuacaoTotal1 with
+			this.ren 			= &renderer!;
+			this.text 			= "Totais";
+			this.fontSize		= tFontSize;
+			this.x				= px[3];
+			this.y				= headerPontuacao.y + 20;
+			this.xAlign			= 0; 
+			this.yAlign			= 1;
+		end;	
+			
+			
+		ty = 80;		
+		by = headerJogador.y + 10;
+		tFontSize = tFontSize + 5;	
+		
+		
+		var SCR_text p1_id 		= SCR_text.build( &renderer! , " " , "../Font.ttf" , tFontSize , title.fontColor , px[0] , by+(ty*1) , 0 , 1 );	
+		var SCR_text p1_hunters = SCR_text.build( &renderer! , " " , "../Font.ttf" , tFontSize , title.fontColor , px[1] , by+(ty*1) , 0 , 1 );
+		var SCR_text p1_pts 	= SCR_text.build( &renderer! , " " , "../Font.ttf" , tFontSize , title.fontColor , px[2] , by+(ty*1) , 0 , 1 );
+		var SCR_text p1_total 	= SCR_text.build( &renderer! , " " , "../Font.ttf" , tFontSize , title.fontColor , px[3] , by+(ty*1) , 0 , 1 );	
+		if gameData.totalPlayers >= 1 then
+			p1_id.setText(_SRC_intToString(gameSet) );	
+			p1_hunters.setText(_SRC_intToString(scoreHunters[0]) );	
+			p1_pts.setText(_SRC_intToString(scoreValues[0]) );	
+			p1_total.setText(_SRC_intToString(totalScoreValues[0]) );				
+		end
+
+
+		var SCR_text p2_id 		= SCR_text.build( &renderer! , " " , "../Font.ttf" , tFontSize , title.fontColor , px[0] , by+(ty*2) , 0 , 1 );	
+		var SCR_text p2_hunters = SCR_text.build( &renderer! , " " , "../Font.ttf" , tFontSize , title.fontColor , px[1] , by+(ty*2) , 0 , 1 );
+		var SCR_text p2_pts 	= SCR_text.build( &renderer! , " " , "../Font.ttf" , tFontSize , title.fontColor , px[2] , by+(ty*2) , 0 , 1 );
+		var SCR_text p2_total 	= SCR_text.build( &renderer! , " " , "../Font.ttf" , tFontSize , title.fontColor , px[3] , by+(ty*2) , 0 , 1 );	
+		if gameData.totalPlayers >= 2 then
+			p2_id.setText(_SRC_intToString(gameSet) );	
+			p2_hunters.setText(_SRC_intToString(scoreHunters[1]) );	
+			p2_pts.setText(_SRC_intToString(scoreValues[1]) );	
+			p2_total.setText(_SRC_intToString(totalScoreValues[1]) );				
+		end		
+
+
+		var SCR_text p3_id 		= SCR_text.build( &renderer! , " " , "../Font.ttf" , tFontSize , title.fontColor , px[0] , by+(ty*3) , 0 , 1 );	
+		var SCR_text p3_hunters = SCR_text.build( &renderer! , " " , "../Font.ttf" , tFontSize , title.fontColor , px[1] , by+(ty*3) , 0 , 1 );
+		var SCR_text p3_pts 	= SCR_text.build( &renderer! , " " , "../Font.ttf" , tFontSize , title.fontColor , px[2] , by+(ty*3) , 0 , 1 );
+		var SCR_text p3_total 	= SCR_text.build( &renderer! , " " , "../Font.ttf" , tFontSize , title.fontColor , px[3] , by+(ty*3) , 0 , 1 );	
+		if gameData.totalPlayers >= 3 then
+			p3_id.setText(_SRC_intToString(gameSet) );	
+			p3_hunters.setText(_SRC_intToString(scoreHunters[2]) );	
+			p3_pts.setText(_SRC_intToString(scoreValues[2]) );	
+			p3_total.setText(_SRC_intToString(totalScoreValues[2]) );				
+		end	
+
 		await 500ms;
-		//var AnyKeyContinue contKey;
-		//await contKey.pressed;
+				
+		var AnyKeyContinue contKey;
+		await contKey.pressed;	
+		#else
+			// Aguarda um tempo para reiniciar uma partida
+			await 500ms;			
+		#endif
 	end
 		
 with
-	// Desenha a tela
+	// Redesenha a tela
     every SDL_REDRAW do
-    	#if TEXT_ACT == 1
-        	_SDL_RenderCopy(&&renderer, &&str_tex!, null, (_SDL_Rect&&)&&str_r);
-        #endif
         _SDL_RenderPresent(&&renderer!);
     end
 end
