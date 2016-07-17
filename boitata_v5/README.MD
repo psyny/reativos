@@ -1,7 +1,7 @@
 Jogo Boitata
 
 Compilando:
-Apenas rod os batches "make" para o jogo sem debug. Ou "debug_x" para debugar aspectos diferentes de jogo.
+Apenas rode o "make"
 
 
 Boitata: Jogador
